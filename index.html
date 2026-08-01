@@ -198,31 +198,59 @@ const TPS_STOPS=[50,120];
 const tpsStep=m=>m.tps==null?0:TPS_STOPS.filter(s=>m.tps>=s).length+1;
 const tpsFill=m=>m.tps==null?'var(--tps-na)':`var(--tps-${tpsStep(m)})`;
 
-// Monthly timeline built from each model's OpenRouter listing date (the `created` field —
-// the closest thing to a release date the API gives us). The slider is cumulative: it shows
-// everything listed UP TO that month, which is what makes the frontier visibly march out.
-let MONTHS=[];
-function buildMonths(){
+const MONTH_NAMES=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+// The timeline is built from each model's OpenRouter listing date (the `created` field —
+// the closest thing to a release date the API gives us) and is cumulative: each stop shows
+// everything listed UP TO it, which is what makes the frontier visibly march outward.
+//
+// Resolution is deliberately mixed. A month per stop is right for 2025, but releases now
+// land days apart — DeepSeek V4 Flash 0731 took a chunk out of the middle of the frontier
+// roughly 32 hours after listing — and a monthly step drops that whole story into one
+// frame. So the recent window steps by week and everything older stays monthly.
+const WEEKLY_WINDOW_DAYS = 56;
+const DAY = 86400;
+
+let STOPS=[];
+function buildStops(){
   const ts=MODELS.map(m=>m.t).filter(Boolean);
   if(!ts.length) return [];
-  const a=new Date(Math.min(...ts)*1000), b=new Date(Math.max(...ts)*1000);
+  const first=new Date(Math.min(...ts)*1000), last=Math.max(...ts);
+  const weeklyFrom = last - WEEKLY_WINDOW_DAYS*DAY;
   const out=[];
-  for(let y=a.getUTCFullYear(),mo=a.getUTCMonth();y<b.getUTCFullYear()||(y===b.getUTCFullYear()&&mo<=b.getUTCMonth());){
-    out.push({y,mo,end:Date.UTC(y,mo+1,1)/1000});
+
+  for(let y=first.getUTCFullYear(), mo=first.getUTCMonth();;){
+    const end=Date.UTC(y,mo+1,1)/1000;
+    if(end>weeklyFrom) break;
+    out.push({end, label:`${MONTH_NAMES[mo]} ${y}`, short:`${MONTH_NAMES[mo]} ${String(y).slice(2)}`});
     if(++mo>11){mo=0;y++;}
+  }
+
+  // Weekly stops carry on from wherever the monthly ones stopped, through the newest
+  // listing. The last stop is clamped to just past it so "now" is always reachable.
+  let t = out.length ? out[out.length-1].end : Math.min(...ts);
+  while(t <= last){
+    t = Math.min(t + 7*DAY, last + 1);
+    const d = new Date((t-1)*1000);   // label the last day the stop includes, not the boundary
+    out.push({
+      end: t,
+      label: `${d.getUTCDate()} ${MONTH_NAMES[d.getUTCMonth()]} ${d.getUTCFullYear()}`,
+      short: `${d.getUTCDate()} ${MONTH_NAMES[d.getUTCMonth()]}`,
+      week: true,
+    });
   }
   return out;
 }
-const MONTH_NAMES=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-function initMonths(){
-  const wasAtEnd = !MONTHS.length || +$('#asof').value===MONTHS.length-1;
-  MONTHS=buildMonths();
-  $('#asof').max=MONTHS.length-1;
-  // Live data can add a month on the end. Someone parked at "now" should stay at "now";
+
+function initStops(){
+  const wasAtEnd = !STOPS.length || +$('#asof').value===STOPS.length-1;
+  STOPS=buildStops();
+  $('#asof').max=STOPS.length-1;
+  // Live data can add a stop on the end. Someone parked at "now" should stay at "now";
   // someone who rewound deliberately should not be yanked forward.
-  if(wasAtEnd) $('#asof').value=MONTHS.length-1;
+  if(wasAtEnd) $('#asof').value=STOPS.length-1;
 }
-const cutoff=()=>MONTHS[+$('#asof').value]?.end ?? Infinity;
+const cutoff=()=>STOPS[+$('#asof').value]?.end ?? Infinity;
 
 // Drag-select: a box drawn on the plot acts exactly like the text filter — everything
 // inside stays lit and labelled, everything else dims. Kept in viewBox units so it
@@ -390,7 +418,7 @@ function renderTable(rows,key,meta){
 function render(){
   const key=$('#metric').value, prov=$('#prov').value, oss=$('#oss').value;
   const terms=activeTerms();
-  const asof=cutoff(), atEnd=!MONTHS.length||+$('#asof').value===MONTHS.length-1;
+  const asof=cutoff(), atEnd=!STOPS.length||+$('#asof').value===STOPS.length-1;
   const scored=MODELS.filter(m=>m[key]!=null);
   const all=scored.filter(m=>m.t<=asof);
   const front=pareto(all.slice(),key);
@@ -432,16 +460,21 @@ function render(){
   g+=`<text class="axlabel" x="${M.l+(W-M.l-M.r)/2}" y="${H-12}" text-anchor="middle">Blended price (3 in : 1 out), $ per million tokens — price doubles each vertical line</text>`;
   g+=`<text class="axlabel" transform="translate(16,${M.t+(H-M.t-M.b)/2}) rotate(-90)" text-anchor="middle">${$('#metric').selectedOptions[0].text}</text>`;
 
-  // Ghost frontiers every 6 months before the current cutoff — the trail the frontier left.
-  // Each one is date-stamped at its right end, otherwise the dashes read as noise.
-  for(let k=0;k<+$('#asof').value;k+=6){
-    const mth=MONTHS[k];
+  // Ghost frontiers roughly every six months before the current cutoff — the trail the
+  // frontier left. Spaced by DATE, not by stop index: the recent window steps weekly, so
+  // "every 6th stop" would crowd six dashed lines into the last month and a half.
+  const GHOST_GAP = 182*DAY;
+  let lastGhost = 0;
+  for(let k=0;k<+$('#asof').value;k++){
+    const mth=STOPS[k];
+    if(mth.end-lastGhost < GHOST_GAP) continue;
+    lastGhost = mth.end;
     const past=pareto(scored.filter(m=>m.t<=mth.end),key);
     if(past.length<2) continue;
     g+=`<polyline fill="none" stroke="var(--frontier)" stroke-width="1.5" stroke-linejoin="round"
         stroke-dasharray="4 4" opacity="0.3" points="${past.map(f=>X(f.b)+','+Y(f[key])).join(' ')}"/>`;
     const tip=past[past.length-1];
-    g+=`<text class="ghostlabel" x="${X(tip.b)+8}" y="${Y(tip[key])+3.5}">${MONTH_NAMES[mth.mo]} ${String(mth.y).slice(2)}</text>`;
+    g+=`<text class="ghostlabel" x="${X(tip.b)+8}" y="${Y(tip[key])+3.5}">${mth.short}</text>`;
   }
   g+=`<polyline fill="none" stroke="var(--frontier)" stroke-width="2" stroke-linejoin="round"
       points="${front.map(f=>X(f.b)+','+Y(f[key])).join(' ')}" opacity="${filtering?0.3:1}"/>`;
@@ -521,13 +554,13 @@ function render(){
   const noMatch = !statusMsg && all.length && !rows.length;
   $('#plot').innerHTML = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img"
       aria-label="Price versus ${$('#metric').selectedOptions[0].text.toLowerCase()} for ${all.length} models">${g}</svg>`
-    + (noMatch ? `<div class="nomatch">Nothing listed by ${MONTH_NAMES[MONTHS[+$('#asof').value].mo]} ${MONTHS[+$('#asof').value].y} matches ${terms.map(t=>`“${t}”`).join(' or ')} — try a later month.</div>` : '');
+    + (noMatch ? `<div class="nomatch">Nothing listed by ${STOPS[+$('#asof').value].label} matches ${terms.map(t=>`“${t}”`).join(' or ')} — try a later month.</div>` : '');
 
   // A rewound timeline has to keep announcing itself. The old wording only mentioned the
   // date when nothing else was filtered, so "3 of 74 shown" silently hid the fact that the
   // missing models simply weren't listed yet.
-  const mth=MONTHS[+$('#asof').value];
-  const asofLabel=mth?`${MONTH_NAMES[mth.mo]} ${mth.y}`:'';
+  const stop=STOPS[+$('#asof').value];
+  const asofLabel=stop?stop.label:'';
   const asofNote = atEnd ? '' : ` · ${all.length} of ${scored.length} listed by ${asofLabel}`;
   $('#count').textContent = (filtering
     ? `${rows.length} of ${all.length} ${brush&&!terms.length&&!prov?'selected':'shown'}`
@@ -651,9 +684,9 @@ function bindTips(){
 }
 
 function stamp(){
-  const m=MONTHS[+$('#asof').value];
-  if(!m) return;
-  $('#asofLabel').textContent=`${MONTH_NAMES[m.mo]} ${m.y}`;
+  const stop=STOPS[+$('#asof').value];
+  if(!stop) return;
+  $('#asofLabel').textContent=stop.label;
 }
 $('#asof').oninput=()=>{stamp();render();};
 
@@ -661,12 +694,12 @@ $('#asof').oninput=()=>{stamp();render();};
 let timer=null;
 $('#play').onclick=()=>{
   if(timer){ clearInterval(timer); timer=null; $('#play').textContent='▶ Play'; return; }
-  if(+$('#asof').value>=MONTHS.length-1) $('#asof').value=0;
+  if(+$('#asof').value>=STOPS.length-1) $('#asof').value=0;
   $('#play').textContent='❚❚ Pause';
   stamp(); render();
   timer=setInterval(()=>{
     const v=+$('#asof').value;
-    if(v>=MONTHS.length-1){ clearInterval(timer); timer=null; $('#play').textContent='▶ Play'; return; }
+    if(v>=STOPS.length-1){ clearInterval(timer); timer=null; $('#play').textContent='▶ Play'; return; }
     $('#asof').value=v+1; stamp(); render();
   },550);
 };
@@ -700,7 +733,7 @@ $('#toggle').onclick=()=>{
 };
 function boot(){
   initProviders();
-  initMonths();
+  initStops();
   stamp();
   render();
 }
