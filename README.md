@@ -1,5 +1,7 @@
 # frontier-chart
 
+Live at **https://frontier.josiahcoad.com**
+
 Cost versus intelligence for the 100 highest-scoring models on OpenRouter, with the value
 frontier drawn through them. One static page plus one edge function.
 
