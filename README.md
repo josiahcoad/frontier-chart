@@ -8,21 +8,23 @@ frontier drawn through them. One static page plus one edge function.
 ## How data gets in
 
 ```
-OpenRouter /models
-      │
-      ├─ api/models.js  (edge)  ── cached 1h at the edge ──> the live page
-      │
-      └─ scripts/refresh.mjs    ── writes ──> data/speed.js
-                                              index.html  (FALLBACK snapshot)
+OpenRouter /models  ──>  api/models.js (edge)  ──cached 1h at the edge──>  the page
 ```
 
-The page renders from the snapshot baked into `index.html` immediately, then replaces it
-with whatever `/api/models` returns. If that fetch fails — OpenRouter is down, or you
-opened the file straight off disk — the snapshot stays on screen and nothing looks broken.
+The page ships with no data. It fetches `/api/models` on load and draws what comes back.
 
-**No database, no cron, no KV.** `Cache-Control: s-maxage=3600, stale-while-revalidate=86400`
-does all the work: one origin fetch an hour globally regardless of traffic, and a cache miss
-serves the previous copy instantly rather than making anyone wait.
+**No database, no cron, no KV, and deliberately no baked-in snapshot.**
+`Cache-Control: s-maxage=3600, stale-while-revalidate=86400` does the work: one origin fetch
+an hour globally regardless of traffic, and a cache miss serves the previous copy instantly
+rather than making anyone wait. That `stale-while-revalidate` window is also the outage
+story — if OpenRouter goes down, the edge keeps serving the last good payload for 24 hours.
+
+An inlined fallback copy was tried and removed. It cost ~30KB (over half the page) and was a
+second source of truth guaranteed to drift out of sync, in exchange for covering only the
+narrow case where the HTML serves but the function does not. When the fetch does fail, the
+page says so explicitly rather than rendering an empty chart.
+
+## Refreshing speed data
 
 ## Refreshing the snapshot
 
@@ -30,9 +32,7 @@ serves the previous copy instantly rather than making anyone wait.
 node scripts/refresh.mjs
 ```
 
-Rewrites `data/speed.js` and the `FALLBACK` block in `index.html`. Only affects the offline
-copy — the live page is already current via the edge function. Worth running occasionally so
-a first paint isn't visibly stale.
+Rewrites `data/speed.js`, the only committed data left. Everything else is live.
 
 ## Why speed data is committed
 
@@ -70,11 +70,11 @@ downloadable weights rather than a specific licence.
 ## Local development
 
 ```bash
-vercel dev          # or: node scripts/refresh.mjs && open index.html
+vercel dev
 ```
 
-Opening `index.html` directly works and exercises the fallback path — the `/api/models`
-fetch just fails and is ignored.
+Opening `index.html` straight off disk shows the "could not load model data" state, since
+there is no function to answer `/api/models`.
 
 ## Credits
 
