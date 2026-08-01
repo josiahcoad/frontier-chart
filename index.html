@@ -100,6 +100,7 @@ th:hover .arrow.idle{opacity:.85}
 .tcap{font-size:12.5px;color:var(--text-secondary);margin:0 4px 8px}
 .tcap b{color:var(--text-primary)}
 .hide{display:none}
+.statusmsg{font-size:13px;fill:var(--text-secondary)}
 .foot{font-size:12px;color:var(--muted);margin:14px 4px 0}
 .foot a{color:inherit}
 .empty{padding:40px 8px;text-align:center;color:var(--text-secondary);font-size:13.5px}
@@ -164,6 +165,8 @@ th:hover .arrow.idle{opacity:.85}
 // for 24h if OpenRouter goes down, so a second copy would add ~30KB and a second thing to
 // drift, to cover only the narrow case where the HTML serves but the function does not.
 let MODELS = [];
+// Non-null while the chart has nothing to draw; rendered in the middle of the empty plot.
+let statusMsg = null;
 const W=980,H=580,M={t:22,r:26,b:56,l:60};
 const FREE_X=0.028, XMIN=0.022, XMAX=34;
 const lx=v=>Math.log10(Math.max(v,FREE_X));
@@ -219,7 +222,7 @@ function initMonths(){
   // someone who rewound deliberately should not be yanked forward.
   if(wasAtEnd) $('#asof').value=MONTHS.length-1;
 }
-const cutoff=()=>MONTHS[+$('#asof').value].end;
+const cutoff=()=>MONTHS[+$('#asof').value]?.end ?? Infinity;
 
 // Drag-select: a box drawn on the plot acts exactly like the text filter — everything
 // inside stays lit and labelled, everything else dims. Kept in viewBox units so it
@@ -387,13 +390,17 @@ function renderTable(rows,key,meta){
 function render(){
   const key=$('#metric').value, prov=$('#prov').value, oss=$('#oss').value;
   const terms=activeTerms();
-  const asof=cutoff(), atEnd=+$('#asof').value===MONTHS.length-1;
+  const asof=cutoff(), atEnd=!MONTHS.length||+$('#asof').value===MONTHS.length-1;
   const scored=MODELS.filter(m=>m[key]!=null);
   const all=scored.filter(m=>m.t<=asof);
   const front=pareto(all.slice(),key);
   const frontIds=new Set(front.map(f=>f.id));
   const ys=scored.map(m=>m[key]);
-  const y0=Math.floor(Math.min(...ys)/5)*5, y1=Math.ceil(Math.max(...ys)/5)*5;
+  // Before data arrives there is nothing to take a min/max of. Fall back to the range the
+  // real scores occupy so the axes are drawn at their final scale and nothing jumps when
+  // the dots land. (Math.min(...[]) is Infinity, which would poison every coordinate.)
+  const y0 = ys.length ? Math.floor(Math.min(...ys)/5)*5 : 5;
+  const y1 = ys.length ? Math.ceil(Math.max(...ys)/5)*5 : 65;
   const X=v=>M.l+(lx(v)-lx(XMIN))/(lx(XMAX)-lx(XMIN))*(W-M.l-M.r);
   const Y=v=>H-M.b-(v-y0)/(y1-y0)*(H-M.t-M.b);
 
@@ -504,17 +511,23 @@ function render(){
   // nothing — every dot dims and the reader keeps the axes, the frontier, and a view of
   // where their search would land. Replacing the whole plot with a sentence threw all of
   // that away. The bare message is only for a date so early that no model exists yet.
-  $('#plot').innerHTML = all.length
-    ? `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img"
-        aria-label="Price versus ${$('#metric').selectedOptions[0].text.toLowerCase()} for ${all.length} models">${g}</svg>`
-       + (rows.length ? '' : `<div class="nomatch">Nothing listed by ${MONTH_NAMES[MONTHS[+$('#asof').value].mo]} ${MONTHS[+$('#asof').value].y} matches ${terms.map(t=>`“${t}”`).join(' or ')} — try a later month.</div>`)
-    : `<div class="empty">No models listed this early. Move the timeline forward.</div>`;
+  // The axes, gridlines and labels are drawn in every state — loading, error, empty filter.
+  // Swapping the plot out for a sentence collapses the card, moves everything below it, and
+  // throws away the context that tells the reader where the missing dots would have gone.
+  if(statusMsg){
+    g += `<text class="statusmsg" x="${M.l+(W-M.l-M.r)/2}" y="${M.t+(H-M.t-M.b)/2}"
+      text-anchor="middle">${statusMsg}</text>`;
+  }
+  const noMatch = !statusMsg && all.length && !rows.length;
+  $('#plot').innerHTML = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img"
+      aria-label="Price versus ${$('#metric').selectedOptions[0].text.toLowerCase()} for ${all.length} models">${g}</svg>`
+    + (noMatch ? `<div class="nomatch">Nothing listed by ${MONTH_NAMES[MONTHS[+$('#asof').value].mo]} ${MONTHS[+$('#asof').value].y} matches ${terms.map(t=>`“${t}”`).join(' or ')} — try a later month.</div>` : '');
 
   // A rewound timeline has to keep announcing itself. The old wording only mentioned the
   // date when nothing else was filtered, so "3 of 74 shown" silently hid the fact that the
   // missing models simply weren't listed yet.
   const mth=MONTHS[+$('#asof').value];
-  const asofLabel=`${MONTH_NAMES[mth.mo]} ${mth.y}`;
+  const asofLabel=mth?`${MONTH_NAMES[mth.mo]} ${mth.y}`:'';
   const asofNote = atEnd ? '' : ` · ${all.length} of ${scored.length} listed by ${asofLabel}`;
   $('#count').textContent = (filtering
     ? `${rows.length} of ${all.length} ${brush&&!terms.length&&!prov?'selected':'shown'}`
@@ -693,15 +706,17 @@ function boot(){
 }
 
 function showStatus(msg){
-  $('#plot').innerHTML = `<div class="empty">${msg}</div>`;
+  statusMsg = msg;
+  boot();
 }
 
-showStatus('Loading models from OpenRouter…');
+showStatus('Loading models…');
 fetch('/api/models')
   .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
   .then(data => {
     if(!Array.isArray(data) || !data.length) throw new Error('empty response');
     MODELS = data;
+    statusMsg = null;
     boot();
     $('#freshness').textContent = 'live, cached up to an hour';
   })
