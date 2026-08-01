@@ -1,0 +1,11 @@
+// First-token latency (ms) and throughput (tokens/sec), keyed by OpenRouter model id.
+//
+// Why this is a committed file and not a live fetch: OpenRouter's public API exposes
+// `latency_last_30m` and `throughput_last_30m` on the /endpoints route, but they return
+// null for every model — the numbers on their website come from an internal endpoint we
+// cannot reach. So these are a hand-captured snapshot (2026-07-31).
+//
+// Consequence: prices, scores, context and open-weights status refresh hourly from the
+// API; these two do not. A model absent from this map renders as the chart's existing
+// "no speed data" state — smallest marker, gray, em dash in the table — so a new model
+// degrades quietly instead of breaking the view.

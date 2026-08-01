@@ -1,0 +1,706 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Cost versus intelligence for the 100 highest-scoring models on OpenRouter, refreshed hourly.">
+<style>
+  /* The artifact host used to supply these; a standalone page has to set its own baseline. */
+  *{box-sizing:border-box}
+  body{margin:0;font:14px system-ui,-apple-system,"Segoe UI",sans-serif;background:#f9f9f7;color:#0b0b0b}
+  @media (prefers-color-scheme: dark){body{background:#0d0d0d;color:#fff}}
+  img{max-width:100%}
+</style>
+<title>LLM Cost vs Intelligence — Top 100 on OpenRouter</title>
+<style>
+.viz-root{
+  color-scheme: light;
+  --surface-1:#fcfcfb; --plane:#f9f9f7;
+  --text-primary:#0b0b0b; --text-secondary:#52514e; --muted:#898781;
+  --grid:#e1e0d9; --axis:#c3c2b7; --border:rgba(11,11,11,0.10);
+  --series-1:#2a78d6; --series-2:#eb6834; --frontier:#2a78d6;
+  /* Throughput ramp: red = slow, amber = middling, green = fast. Held to three steps —
+     a five-step red-to-green has adjacent pairs only 2 dE apart, which nobody can read.
+     Red vs green is the pair colorblind readers lose, so the number is also in the
+     tooltip and the table view. */
+  --tps-1:#d03b3b; --tps-2:#eda100; --tps-3:#008300;
+  --tps-na:#898781;
+}
+@media (prefers-color-scheme: dark){:root:where(:not([data-theme="light"])) .viz-root{
+  color-scheme: dark;
+  --surface-1:#1a1a19; --plane:#0d0d0d;
+  --text-primary:#fff; --text-secondary:#c3c2b7; --muted:#898781;
+  --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,0.10);
+  --series-1:#3987e5; --series-2:#d95926; --frontier:#3987e5;
+  --tps-1:#e06767; --tps-2:#d9a015; --tps-3:#3aa83a;
+  --tps-na:#898781;
+}}
+:root[data-theme="dark"] .viz-root{
+  color-scheme: dark;
+  --surface-1:#1a1a19; --plane:#0d0d0d;
+  --text-primary:#fff; --text-secondary:#c3c2b7; --muted:#898781;
+  --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,0.10);
+  --series-1:#3987e5; --series-2:#d95926; --frontier:#3987e5;
+  --tps-1:#e06767; --tps-2:#d9a015; --tps-3:#3aa83a;
+  --tps-na:#898781;
+}
+body{margin:0;background:var(--plane,#f9f9f7)}
+.viz-root{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--plane);
+  color:var(--text-primary);padding:28px 20px 48px;min-height:100vh;box-sizing:border-box}
+.wrap{max-width:1020px;margin:0 auto}
+h1{font-size:22px;line-height:1.25;margin:0 0 8px;font-weight:650}
+.note{font-size:12.5px;line-height:1.55;color:var(--text-secondary);margin:0 0 16px;max-width:76ch}
+.card{background:var(--surface-1);border:1px solid var(--border);border-radius:12px;padding:14px 14px 10px}
+.bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px;padding:0 4px}
+select,button,input{font:inherit;font-size:13px;color:var(--text-primary);background:var(--surface-1);
+  border:1px solid var(--border);border-radius:8px;padding:6px 10px}
+select,button{cursor:pointer}
+button.on{background:var(--frontier);border-color:var(--frontier);color:#fff}
+input{min-width:190px}
+input:focus{outline:2px solid var(--series-1);outline-offset:-1px}
+.count{font-size:12.5px;color:var(--muted)}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;gap:4px;font-size:12.5px;background:var(--frontier);
+  color:#fff;border-radius:999px;padding:3px 5px 3px 10px}
+.chip button{all:unset;cursor:pointer;line-height:1;padding:1px 5px;border-radius:999px;opacity:.75}
+.chip button:hover,.chip button:focus-visible{opacity:1;background:rgba(255,255,255,.28)}
+.timeline{gap:12px;margin-bottom:14px}
+.timeline input[type=range]{flex:1;min-width:220px;max-width:520px;padding:0;accent-color:var(--frontier);cursor:pointer}
+#play{min-width:82px}
+.asof{font-size:13px;color:var(--text-secondary);font-variant-numeric:tabular-nums;min-width:9ch}
+.legend{display:flex;gap:18px;flex-wrap:wrap;font-size:12.5px;color:var(--text-secondary);
+  margin:2px 4px 6px;align-items:center}
+.legend svg{vertical-align:-3px;margin-right:5px}
+.plot{overflow-x:auto}
+svg.chart{display:block;min-width:680px;width:100%;height:auto}
+.tick{font-size:11px;fill:var(--muted)}
+.axlabel{font-size:12px;fill:var(--text-secondary)}
+.ghostlabel{font-size:10px;fill:var(--muted);
+  paint-order:stroke;stroke:var(--surface-1);stroke-width:3px;stroke-linejoin:round}
+.dotlabel{font-size:10.5px;fill:var(--text-secondary);
+  paint-order:stroke;stroke:var(--surface-1);stroke-width:3px;stroke-linejoin:round}
+.tip{position:fixed;pointer-events:none;opacity:0;transition:opacity .1s;background:var(--surface-1);
+  border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12.5px;
+  box-shadow:0 6px 20px rgba(0,0,0,.14);max-width:280px;z-index:9;line-height:1.5}
+.tip b{display:block;font-size:13px;margin-bottom:3px}
+.tip span{color:var(--text-secondary)}
+table{border-collapse:collapse;width:100%;font-size:12.5px;font-variant-numeric:tabular-nums}
+th,td{text-align:right;padding:5px 8px;border-bottom:1px solid var(--grid)}
+th:first-child,td:first-child{text-align:left;font-variant-numeric:normal}
+th{color:var(--text-secondary);font-weight:600;cursor:pointer;user-select:none;
+  white-space:nowrap;position:sticky;top:0;background:var(--surface-1)}
+th:hover{color:var(--text-primary)}
+th:focus-visible{outline:2px solid var(--series-1);outline-offset:-2px}
+th.sorted{color:var(--text-primary)}
+.arrow{display:inline-block;width:1em;color:var(--frontier)}
+/* Every sortable header carries a faint ↕ so the whole row reads as clickable.
+   Without it only the active column showed a mark and the other nine looked inert. */
+.arrow.idle{color:var(--muted);opacity:.32}
+th:hover .arrow.idle{opacity:.85}
+.tcap{font-size:12.5px;color:var(--text-secondary);margin:0 4px 8px}
+.tcap b{color:var(--text-primary)}
+.hide{display:none}
+.empty{padding:40px 8px;text-align:center;color:var(--text-secondary);font-size:13.5px}
+.nomatch{text-align:center;color:var(--text-secondary);font-size:13px;padding:2px 8px 8px}
+</style>
+
+</head>
+<body>
+<div class="viz-root"><div class="wrap">
+<h1>Cost vs. intelligence — the 100 smartest models</h1>
+<p class="note">Prices are what OpenRouter bills today, promotional discounts included — a model on promo can cost roughly double once the promo ends, so treat these as a floor. The x-axis blends them 3 input : 1 output. “Open weights” means OpenRouter lists a Hugging Face repo for the model, which tracks downloadable weights rather than a specific licence. Intelligence, coding and agentic scores are Artificial Analysis’, surfaced via OpenRouter. <span id="freshness">Showing a saved snapshot.</span></p>
+
+<div class="bar">
+  <input id="q" type="search" placeholder="Add a term, press Enter: luna, glm…" autocomplete="off"
+    aria-label="Filter models by name — press Enter to add another term">
+  <span id="chips" class="chips"></span>
+  <select id="prov"><option value="">All providers</option></select>
+  <select id="oss" aria-label="Filter by open or closed weights">
+    <option value="">Open + closed weights</option>
+    <option value="1">Open weights only</option>
+    <option value="0">Closed weights only</option>
+  </select>
+  <select id="metric">
+    <option value="i">Intelligence index</option>
+    <option value="c">Coding index</option>
+    <option value="a">Agentic index</option>
+  </select>
+  <button id="toggle">Show table</button>
+  <button id="mode" aria-pressed="false">✏️ Lasso select</button>
+  <button id="draw" aria-pressed="false">➜ Add arrow</button>
+  <button id="clear" class="hide">Clear selection</button>
+  <button id="clearArrows" class="hide">Clear arrows</button>
+  <span class="count" id="count"></span>
+</div>
+
+<div class="bar timeline">
+  <button id="play" aria-label="Play the frontier forward">▶ Play</button>
+  <input id="asof" type="range" min="0" max="0" value="0" step="1" aria-label="Show models listed up to this month">
+  <span class="asof" id="asofLabel"></span>
+</div>
+
+<div class="card">
+  <div class="legend">
+    <span><svg width="26" height="13"><line x1="1" y1="6.5" x2="25" y2="6.5" stroke="var(--frontier)" stroke-width="2"/></svg>Value frontier</span>
+    <span><svg width="26" height="13"><line x1="1" y1="6.5" x2="25" y2="6.5" stroke="var(--frontier)" stroke-width="1.5" stroke-dasharray="4 4" opacity="0.5"/></svg>Previous frontiers</span>
+    <span><svg width="13" height="13"><path d="M2.5 2.5L10.5 10.5M10.5 2.5L2.5 10.5" stroke="var(--tps-3)" stroke-width="2.2" stroke-linecap="round"/></svg>Text only (no vision)</span>
+    <span><svg width="46" height="14"><circle cx="6" cy="7" r="4" fill="var(--muted)"/><circle cx="20" cy="7" r="6" fill="var(--muted)"/><circle cx="37" cy="7" r="8.5" fill="var(--muted)"/></svg>Slower first token &rarr;</span>
+    <span><svg width="48" height="13"><circle cx="6" cy="6.5" r="5" fill="var(--tps-1)"/><circle cx="21" cy="6.5" r="5" fill="var(--tps-2)"/><circle cx="36" cy="6.5" r="5" fill="var(--tps-3)"/></svg>tokens per second (slow &rarr; fast)</span>
+  </div>
+  <div class="plot" id="plot"></div>
+  <div id="tablewrap" class="hide" style="padding:6px 4px 12px"></div>
+</div>
+</div>
+<div class="tip" id="tip"></div>
+</div>
+
+<script>
+// Snapshot baked in by scripts/refresh.mjs. The page renders from this immediately, then
+// upgrades to live data from /api/models. Keeping it inline means the file still works
+// opened straight off disk, with no server and no network.
+const FALLBACK = /* FALLBACK:start */[{"id":"anthropic/claude-opus-5","name":"Claude Opus 5","prov":"anthropic","i":60.7,"c":78,"a":55.3,"pin":5,"pout":25,"b":10,"ctx":1000000,"t":1784912544,"vision":true,"lat":1107,"tps":61,"oss":false},{"id":"anthropic/claude-fable-5","name":"Anthropic: Claude Fable 5","prov":"anthropic","i":59.9,"c":76.5,"a":52.8,"pin":10,"pout":50,"b":20,"ctx":1000000,"t":1781007515,"vision":true,"lat":3373,"tps":49,"oss":false},{"id":"openai/gpt-5.6-sol","name":"OpenAI: GPT-5.6 Sol","prov":"openai","i":58.9,"c":77.4,"a":54,"pin":5,"pout":30,"b":11.25,"ctx":1050000,"t":1783590850,"vision":true,"lat":2275,"tps":77,"oss":false},{"id":"moonshotai/kimi-k3","name":"MoonshotAI: Kimi K3","prov":"moonshotai","i":57.1,"c":76.2,"a":50.1,"pin":3,"pout":15,"b":6,"ctx":1048576,"t":1784215858,"vision":true,"lat":4858,"tps":22,"oss":true},{"id":"anthropic/claude-opus-4.8","name":"Anthropic: Claude Opus 4.8","prov":"anthropic","i":55.7,"c":74.3,"a":47.2,"pin":5,"pout":25,"b":10,"ctx":1000000,"t":1779905091,"vision":true,"lat":1345,"tps":61,"oss":false},{"id":"openai/gpt-5.6-terra","name":"OpenAI: GPT-5.6 Terra","prov":"openai","i":55,"c":76.7,"a":47.4,"pin":1,"pout":6,"b":2.25,"ctx":1050000,"t":1783590857,"vision":true,"lat":1510,"tps":61,"oss":false},{"id":"openai/gpt-5.5","name":"OpenAI: GPT-5.5","prov":"openai","i":54.8,"c":74.9,"a":44.9,"pin":5,"pout":30,"b":11.25,"ctx":1050000,"t":1777051893,"vision":true,"lat":2044,"tps":73,"oss":false},{"id":"x-ai/grok-4.5","name":"xAI: Grok 4.5","prov":"x-ai","i":53.8,"c":72.4,"a":45.7,"pin":2,"pout":6,"b":3,"ctx":500000,"t":1783523154,"vision":true,"lat":942,"tps":52,"oss":false},{"id":"anthropic/claude-opus-4.7","name":"Anthropic: Claude Opus 4.7","prov":"anthropic","i":53.5,"c":73.6,"a":44.4,"pin":5,"pout":25,"b":10,"ctx":1000000,"t":1776351100,"vision":true,"lat":856,"tps":70,"oss":false},{"id":"anthropic/claude-sonnet-5","name":"Anthropic: Claude Sonnet 5","prov":"anthropic","i":53.4,"c":71.5,"a":46.7,"pin":2,"pout":10,"b":4,"ctx":1000000,"t":1782843083,"vision":true,"lat":1676,"tps":60,"oss":false},{"id":"openai/gpt-5.4","name":"OpenAI: GPT-5.4","prov":"openai","i":51.4,"c":71.1,"a":41.1,"pin":2.5,"pout":15,"b":5.625,"ctx":1050000,"t":1772734352,"vision":true,"lat":808,"tps":79,"oss":false},{"id":"openai/gpt-5.6-luna","name":"OpenAI: GPT-5.6 Luna","prov":"openai","i":51.2,"c":71.4,"a":45.6,"pin":0.1,"pout":0.6,"b":0.225,"ctx":1050000,"t":1783590864,"vision":true,"lat":1166,"tps":88,"oss":false},{"id":"z-ai/glm-5.2","name":"Z.ai: GLM 5.2","prov":"z-ai","i":51.1,"c":68.8,"a":43.1,"pin":0.7601,"pout":2.3888,"b":1.1672,"ctx":1048576,"t":1781631930,"vision":false,"lat":624,"tps":101,"oss":true},{"id":"meta/muse-spark-1.1","name":"Meta: Muse Spark 1.1","prov":"meta","i":50.6,"c":71.3,"a":37.5,"pin":1.25,"pout":4.25,"b":2,"ctx":1048576,"t":1784215741,"vision":true,"lat":4696,"tps":125,"oss":false},{"id":"google/gemini-3.5-flash","name":"Google: Gemini 3.5 Flash","prov":"google","i":50.2,"c":70.1,"a":37.4,"pin":1.5,"pout":9,"b":3.375,"ctx":1048576,"t":1779193800,"vision":true,"lat":1236,"tps":127,"oss":false},{"id":"google/gemini-3.6-flash","name":"Google: Gemini 3.6 Flash","prov":"google","i":50.1,"c":69.2,"a":38.7,"pin":1.5,"pout":7.5,"b":3,"ctx":1048576,"t":1784646733,"vision":true,"lat":1630,"tps":142,"oss":false},{"id":"deepseek/deepseek-v4-flash-0731","name":"DeepSeek: DeepSeek V4 Flash 0731","prov":"deepseek","i":49.9,"c":69.1,"a":45.7,"pin":0.14,"pout":0.28,"b":0.175,"ctx":1048576,"t":1785478908,"vision":false,"lat":null,"tps":null,"oss":true},{"id":"anthropic/claude-sonnet-4.6","name":"Anthropic: Claude Sonnet 4.6","prov":"anthropic","i":47.2,"c":63,"a":40.8,"pin":3,"pout":15,"b":6,"ctx":1000000,"t":1771342990,"vision":true,"lat":765,"tps":51,"oss":false},{"id":"google/gemini-3.1-pro-preview","name":"Google: Gemini 3.1 Pro Preview","prov":"google","i":46.5,"c":68.8,"a":21.4,"pin":2,"pout":12,"b":4.5,"ctx":1048576,"t":1771509627,"vision":true,"lat":2491,"tps":126,"oss":false},{"id":"qwen/qwen3.7-max","name":"Qwen: Qwen3.7 Max","prov":"qwen","i":46,"c":66,"a":30.6,"pin":1.475,"pout":4.425,"b":2.2125,"ctx":1000000,"t":1779376861,"vision":false,"lat":1343,"tps":44,"oss":false},{"id":"minimax/minimax-m3","name":"MiniMax: MiniMax M3","prov":"minimax","i":44.4,"c":58.6,"a":35.4,"pin":0.3,"pout":1.2,"b":0.525,"ctx":1048576,"t":1780245374,"vision":true,"lat":393,"tps":117,"oss":true},{"id":"deepseek/deepseek-v4-pro","name":"DeepSeek: DeepSeek V4 Pro","prov":"deepseek","i":44.3,"c":59.4,"a":36.4,"pin":0.435,"pout":0.87,"b":0.5437,"ctx":1048576,"t":1777000679,"vision":false,"lat":682,"tps":115,"oss":true},{"id":"moonshotai/kimi-k2.6","name":"MoonshotAI: Kimi K2.6","prov":"moonshotai","i":44.2,"c":61.8,"a":30.3,"pin":0.6,"pout":3.41,"b":1.3025,"ctx":262144,"t":1776699402,"vision":true,"lat":246,"tps":174,"oss":true},{"id":"xiaomi/mimo-v2.5-pro","name":"Xiaomi: MiMo-V2.5-Pro","prov":"xiaomi","i":42.2,"c":60.2,"a":29.1,"pin":0.435,"pout":0.87,"b":0.5437,"ctx":1050000,"t":1776874273,"vision":false,"lat":583,"tps":68,"oss":true},{"id":"moonshotai/kimi-k2.7-code","name":"MoonshotAI: Kimi K2.7 Code","prov":"moonshotai","i":41.9,"c":60.8,"a":29.6,"pin":0.73,"pout":3.5,"b":1.4225,"ctx":262144,"t":1781266361,"vision":true,"lat":676,"tps":101,"oss":true},{"id":"tencent/hy3-preview","name":"Tencent: Hy3 preview","prov":"tencent","i":41.2,"c":58.8,"a":30.7,"pin":0.063,"pout":0.21,"b":0.0998,"ctx":262144,"t":1776878150,"vision":false,"lat":2203,"tps":84,"oss":true},{"id":"nex-agi/nex-n2-pro","name":"Nex AGI: Nex-N2-Pro","prov":"nex-agi","i":41,"c":59.1,"a":31,"pin":0.25,"pout":1,"b":0.4375,"ctx":262144,"t":1780937140,"vision":true,"lat":2451,"tps":74,"oss":true},{"id":"thinkingmachines/inkling","name":"Thinking Machines: Inkling","prov":"thinkingmachines","i":40.7,"c":52.1,"a":32.3,"pin":1,"pout":4.05,"b":1.7625,"ctx":1048576,"t":1784325956,"vision":true,"lat":248,"tps":128,"oss":true},{"id":"thinkingmachines/inkling-small","name":"Thinking Machines: Inkling Small","prov":"thinkingmachines","i":40.2,"c":52.9,"a":30.8,"pin":0.5,"pout":1.2,"b":0.675,"ctx":524288,"t":1785443117,"vision":true,"lat":null,"tps":null,"oss":true},{"id":"z-ai/glm-5.1","name":"Z.ai: GLM 5.1","prov":"z-ai","i":40.2,"c":55.8,"a":29.9,"pin":0.966,"pout":3.036,"b":1.4835,"ctx":204800,"t":1775578025,"vision":false,"lat":305,"tps":112,"oss":true},{"id":"openai/gpt-5.4-mini","name":"OpenAI: GPT-5.4 Mini","prov":"openai","i":40,"c":56.1,"a":30.2,"pin":0.75,"pout":4.5,"b":1.6875,"ctx":400000,"t":1773748178,"vision":true,"lat":774,"tps":65,"oss":false},{"id":"x-ai/grok-build-0.1","name":"xAI: Grok Build 0.1","prov":"x-ai","i":39.8,"c":51.5,"a":28,"pin":1,"pout":2,"b":1.25,"ctx":256000,"t":1779298123,"vision":true,"lat":334,"tps":126,"oss":false},{"id":"qwen/qwen3.6-plus","name":"Qwen: Qwen3.6 Plus","prov":"qwen","i":39.6,"c":54.5,"a":27.6,"pin":0.325,"pout":1.95,"b":0.7312,"ctx":1000000,"t":1775133557,"vision":true,"lat":1076,"tps":46,"oss":false},{"id":"qwen/qwen3.7-plus","name":"Qwen: Qwen3.7 Plus","prov":"qwen","i":39,"c":55.9,"a":20.8,"pin":0.32,"pout":1.28,"b":0.56,"ctx":1000000,"t":1780491783,"vision":true,"lat":865,"tps":12,"oss":false},{"id":"openai/gpt-5.4-nano","name":"OpenAI: GPT-5.4 Nano","prov":"openai","i":38.2,"c":56.1,"a":27.5,"pin":0.2,"pout":1.25,"b":0.4625,"ctx":400000,"t":1773748187,"vision":true,"lat":789,"tps":83,"oss":false},{"id":"minimax/minimax-m2.7","name":"MiniMax: MiniMax M2.7","prov":"minimax","i":38.1,"c":52.6,"a":25.6,"pin":0.25,"pout":1,"b":0.4375,"ctx":204800,"t":1773836697,"vision":false,"lat":365,"tps":300,"oss":true},{"id":"nvidia/nemotron-3-ultra-550b-a55b","name":"NVIDIA: Nemotron 3 Ultra","prov":"nvidia","i":37.8,"c":49.3,"a":27.4,"pin":0.5,"pout":2.2,"b":0.925,"ctx":512288,"t":1780551208,"vision":false,"lat":432,"tps":214,"oss":true},{"id":"nvidia/nemotron-3-ultra-550b-a55b:free","name":"NVIDIA: Nemotron 3 Ultra (free)","prov":"nvidia","i":37.8,"c":49.3,"a":27.4,"pin":0,"pout":0,"b":0,"ctx":1000000,"t":1780551208,"vision":false,"lat":2314,"tps":34,"oss":true},{"id":"x-ai/grok-4.3","name":"xAI: Grok 4.3","prov":"x-ai","i":37.6,"c":42.2,"a":24.1,"pin":1.25,"pout":2.5,"b":1.5625,"ctx":1000000,"t":1777591821,"vision":true,"lat":533,"tps":90,"oss":false},{"id":"xiaomi/mimo-v2.5","name":"Xiaomi: MiMo-V2.5","prov":"xiaomi","i":37.2,"c":56.8,"a":23.7,"pin":0.14,"pout":0.28,"b":0.175,"ctx":1050000,"t":1776874269,"vision":true,"lat":950,"tps":64,"oss":true},{"id":"qwen/qwen3.6-27b","name":"Qwen: Qwen3.6 27B","prov":"qwen","i":37.1,"c":53.7,"a":27,"pin":0.3,"pout":2,"b":0.725,"ctx":262144,"t":1777255064,"vision":true,"lat":464,"tps":91,"oss":true},{"id":"openai/gpt-5.1","name":"OpenAI: GPT-5.1","prov":"openai","i":36.9,"c":49.4,"a":21,"pin":1.25,"pout":10,"b":3.4375,"ctx":400000,"t":1763060305,"vision":true,"lat":1001,"tps":88,"oss":false},{"id":"google/gemini-3.5-flash-lite","name":"Google: Gemini 3.5 Flash Lite","prov":"google","i":36.5,"c":49.3,"a":26.8,"pin":0.3,"pout":2.5,"b":0.85,"ctx":1048576,"t":1784646726,"vision":true,"lat":1183,"tps":210,"oss":false},{"id":"anthropic/claude-sonnet-4.5","name":"Anthropic: Claude Sonnet 4.5","prov":"anthropic","i":36.4,"c":52.1,"a":24.6,"pin":3,"pout":15,"b":6,"ctx":1000000,"t":1759161676,"vision":true,"lat":1335,"tps":38,"oss":false},{"id":"moonshotai/kimi-k2.5","name":"MoonshotAI: Kimi K2.5","prov":"moonshotai","i":35.4,"c":46.8,"a":21.7,"pin":0.57,"pout":2.85,"b":1.14,"ctx":262144,"t":1769487076,"vision":true,"lat":722,"tps":58,"oss":true},{"id":"openai/gpt-5","name":"OpenAI: GPT-5","prov":"openai","i":34.7,"c":37.8,"a":25.7,"pin":1.25,"pout":10,"b":3.4375,"ctx":400000,"t":1754587413,"vision":true,"lat":795,"tps":78,"oss":false},{"id":"kwaipilot/kat-coder-pro-v2","name":"Kwaipilot: KAT-Coder-Pro V2","prov":"kwaipilot","i":33.7,"c":59.5,"a":15.5,"pin":0.3,"pout":1.2,"b":0.525,"ctx":262144,"t":1774649310,"vision":false,"lat":898,"tps":19,"oss":false},{"id":"qwen/qwen3.5-397b-a17b","name":"Qwen: Qwen3.5 397B A17B","prov":"qwen","i":33.7,"c":48.2,"a":19.8,"pin":0.39,"pout":2.34,"b":0.8775,"ctx":262144,"t":1771223018,"vision":true,"lat":394,"tps":73,"oss":true},{"id":"z-ai/glm-4.7","name":"Z.ai: GLM 4.7","prov":"z-ai","i":33.7,"c":45.3,"a":25.4,"pin":0.4,"pout":1.75,"b":0.7375,"ctx":204800,"t":1766378014,"vision":false,"lat":402,"tps":133,"oss":true},{"id":"qwen/qwen3.5-122b-a10b","name":"Qwen: Qwen3.5-122B-A10B","prov":"qwen","i":32.3,"c":45.7,"a":20.7,"pin":0.26,"pout":2.08,"b":0.715,"ctx":262144,"t":1772053789,"vision":true,"lat":1696,"tps":123,"oss":true},{"id":"deepseek/deepseek-v3.2","name":"DeepSeek: DeepSeek V3.2","prov":"deepseek","i":32,"c":44.2,"a":18.3,"pin":0.269,"pout":0.4,"b":0.3017,"ctx":163840,"t":1764594642,"vision":false,"lat":359,"tps":74,"oss":true},{"id":"qwen/qwen3.6-35b-a3b","name":"Qwen: Qwen3.6 35B A3B","prov":"qwen","i":31.6,"c":41.9,"a":21.4,"pin":0.14,"pout":1,"b":0.355,"ctx":262144,"t":1777260255,"vision":true,"lat":312,"tps":162,"oss":true},{"id":"inclusionai/ring-2.6-1t","name":"inclusionAI: Ring-2.6-1T","prov":"inclusionai","i":30.6,"c":42.8,"a":18.9,"pin":0.075,"pout":0.625,"b":0.2125,"ctx":262144,"t":1778247440,"vision":false,"lat":1326,"tps":61,"oss":false},{"id":"deepseek/deepseek-v3.1-terminus","name":"DeepSeek: DeepSeek V3.1 Terminus","prov":"deepseek","i":30.4,"c":43.5,"a":18.1,"pin":0.27,"pout":1,"b":0.4525,"ctx":163840,"t":1758548275,"vision":false,"lat":571,"tps":49,"oss":true},{"id":"stepfun/step-3.7-flash","name":"StepFun: Step 3.7 Flash","prov":"stepfun","i":30.3,"c":39.6,"a":21.5,"pin":0.2,"pout":1.15,"b":0.4375,"ctx":262144,"t":1779985069,"vision":true,"lat":258,"tps":177,"oss":true},{"id":"mistralai/mistral-medium-3-5","name":"Mistral: Mistral Medium 3.5","prov":"mistralai","i":29.9,"c":46.9,"a":19,"pin":1.5,"pout":7.5,"b":3,"ctx":262144,"t":1777570439,"vision":true,"lat":552,"tps":53,"oss":false},{"id":"anthropic/claude-haiku-4.5","name":"Anthropic: Claude Haiku 4.5","prov":"anthropic","i":29.6,"c":43.9,"a":16.4,"pin":1,"pout":5,"b":2,"ctx":200000,"t":1760547638,"vision":true,"lat":452,"tps":81,"oss":false},{"id":"google/gemma-4-31b-it","name":"Google: Gemma 4 31B","prov":"google","i":29.4,"c":43.4,"a":14.4,"pin":0.1,"pout":0.34,"b":0.16,"ctx":262144,"t":1775148486,"vision":true,"lat":140,"tps":354,"oss":true},{"id":"google/gemma-4-31b-it:free","name":"Google: Gemma 4 31B (free)","prov":"google","i":29.4,"c":43.4,"a":14.4,"pin":0,"pout":0,"b":0,"ctx":262144,"t":1775148486,"vision":true,"lat":1290,"tps":25,"oss":true},{"id":"anthropic/claude-sonnet-4","name":"Anthropic: Claude Sonnet 4","prov":"anthropic","i":28.9,"c":37.6,"a":16.6,"pin":3,"pout":15,"b":6,"ctx":1000000,"t":1747930371,"vision":true,"lat":1130,"tps":50,"oss":false},{"id":"z-ai/glm-4.6","name":"Z.ai: GLM 4.6","prov":"z-ai","i":28.7,"c":45.8,"a":17.7,"pin":0.5,"pout":2,"b":0.875,"ctx":204800,"t":1759235576,"vision":false,"lat":453,"tps":30,"oss":true},{"id":"google/gemini-2.5-pro","name":"Google: Gemini 2.5 Pro","prov":"google","i":25.8,"c":33.3,"a":7.1,"pin":1.25,"pout":10,"b":3.4375,"ctx":1048576,"t":1750169544,"vision":true,"lat":1983,"tps":99,"oss":false},{"id":"google/gemma-4-26b-a4b-it","name":"Google: Gemma 4 26B A4B ","prov":"google","i":25.7,"c":39.3,"a":11,"pin":0.07,"pout":0.34,"b":0.1375,"ctx":262144,"t":1775227989,"vision":true,"lat":355,"tps":61,"oss":true},{"id":"google/gemma-4-26b-a4b-it:free","name":"Google: Gemma 4 26B A4B  (free)","prov":"google","i":25.7,"c":39.3,"a":11,"pin":0,"pout":0,"b":0,"ctx":262144,"t":1775227989,"vision":true,"lat":902,"tps":36,"oss":true},{"id":"nvidia/nemotron-3-super-120b-a12b","name":"NVIDIA: Nemotron 3 Super","prov":"nvidia","i":25.4,"c":37.7,"a":8.7,"pin":0.085,"pout":0.4,"b":0.1638,"ctx":1000000,"t":1773245239,"vision":false,"lat":1025,"tps":158,"oss":true},{"id":"nvidia/nemotron-3-super-120b-a12b:free","name":"NVIDIA: Nemotron 3 Super (free)","prov":"nvidia","i":25.4,"c":37.7,"a":8.7,"pin":0,"pout":0,"b":0,"ctx":262144,"t":1773245239,"vision":false,"lat":1392,"tps":68,"oss":true},{"id":"openai/gpt-5-mini","name":"OpenAI: GPT-5 Mini","prov":"openai","i":25.3,"c":15.6,"a":19.4,"pin":0.25,"pout":2,"b":0.6875,"ctx":400000,"t":1754587407,"vision":true,"lat":1568,"tps":125,"oss":false},{"id":"google/gemini-3.1-flash-lite-preview","name":"Google: Gemini 3.1 Flash Lite Preview","prov":"google","i":25,"c":34.7,"a":6.2,"pin":0.25,"pout":1.5,"b":0.5625,"ctx":1048576,"t":1772512673,"vision":true,"lat":420,"tps":119,"oss":false},{"id":"qwen/qwen3.5-35b-a3b","name":"Qwen: Qwen3.5-35B-A3B","prov":"qwen","i":24,"c":37,"a":11.8,"pin":0.14,"pout":1,"b":0.355,"ctx":262144,"t":1772053822,"vision":true,"lat":356,"tps":162,"oss":true},{"id":"openai/gpt-oss-120b","name":"OpenAI: gpt-oss-120b","prov":"openai","i":23.8,"c":30.4,"a":13.2,"pin":0.037,"pout":0.17,"b":0.0702,"ctx":131072,"t":1754414231,"vision":false,"lat":177,"tps":570,"oss":true},{"id":"cohere/command-a","name":"Cohere: Command A","prov":"cohere","i":22.5,"c":27.8,"a":9.2,"pin":2.5,"pout":10,"b":4.375,"ctx":256000,"t":1741894342,"vision":false,"lat":202,"tps":46,"oss":true},{"id":"qwen/qwen3.5-9b","name":"Qwen: Qwen3.5-9B","prov":"qwen","i":21.4,"c":28.7,"a":7.4,"pin":0.1,"pout":0.15,"b":0.1125,"ctx":262144,"t":1773152396,"vision":true,"lat":638,"tps":42,"oss":true},{"id":"inception/mercury-2","name":"Inception: Mercury 2","prov":"inception","i":21.4,"c":31.1,"a":9.6,"pin":0.25,"pout":0.75,"b":0.375,"ctx":128000,"t":1772636275,"vision":false,"lat":961,"tps":388,"oss":false},{"id":"qwen/qwen3-coder-next","name":"Qwen: Qwen3 Coder Next","prov":"qwen","i":21.1,"c":36.2,"a":8.8,"pin":0.12,"pout":0.8,"b":0.29,"ctx":262144,"t":1770164101,"vision":false,"lat":487,"tps":148,"oss":true},{"id":"cohere/north-mini-code:free","name":"Cohere: North Mini Code (free)","prov":"cohere","i":19.8,"c":36.5,"a":3.1,"pin":0,"pout":0,"b":0,"ctx":256000,"t":1781723748,"vision":false,"lat":804,"tps":73,"oss":true},{"id":"mistralai/mistral-small-2603","name":"Mistral: Mistral Small 4","prov":"mistralai","i":19.6,"c":26.6,"a":4.7,"pin":0.15,"pout":0.6,"b":0.2625,"ctx":262144,"t":1773695685,"vision":true,"lat":389,"tps":102,"oss":true},{"id":"qwen/qwen3-235b-a22b-thinking-2507","name":"Qwen: Qwen3 235B A22B Thinking 2507","prov":"qwen","i":19.6,"c":22.1,"a":3.8,"pin":0.23,"pout":2.3,"b":0.7475,"ctx":262144,"t":1753449557,"vision":false,"lat":439,"tps":66,"oss":true},{"id":"deepseek/deepseek-r1","name":"DeepSeek: R1","prov":"deepseek","i":18.5,"c":24.6,"a":3.1,"pin":0.7,"pout":2.5,"b":1.15,"ctx":163840,"t":1737381095,"vision":false,"lat":821,"tps":79,"oss":true},{"id":"arcee-ai/trinity-large-thinking","name":"Arcee AI: Trinity Large Thinking","prov":"arcee-ai","i":18.2,"c":25.8,"a":3.7,"pin":0.22,"pout":0.85,"b":0.3775,"ctx":262144,"t":1775058318,"vision":false,"lat":203,"tps":228,"oss":true},{"id":"amazon/nova-2-lite-v1","name":"Amazon: Nova 2 Lite","prov":"amazon","i":18.2,"c":23,"a":3.1,"pin":0.3,"pout":2.5,"b":0.85,"ctx":1000000,"t":1764696672,"vision":true,"lat":391,"tps":111,"oss":false},{"id":"moonshotai/kimi-k2-thinking","name":"MoonshotAI: Kimi K2 Thinking","prov":"moonshotai","i":17.3,"c":21,"a":1.8,"pin":0.6,"pout":2.5,"b":1.075,"ctx":262144,"t":1762440622,"vision":false,"lat":470,"tps":185,"oss":true},{"id":"qwen/qwen3-next-80b-a3b-thinking","name":"Qwen: Qwen3 Next 80B A3B Thinking","prov":"qwen","i":16.7,"c":17.4,"a":2.1,"pin":0.15,"pout":1.2,"b":0.4125,"ctx":262144,"t":1757612284,"vision":false,"lat":413,"tps":217,"oss":true},{"id":"mistralai/mistral-large-2512","name":"Mistral: Mistral Large 3 2512","prov":"mistralai","i":15.9,"c":20.1,"a":5.5,"pin":0.5,"pout":1.5,"b":0.75,"ctx":262144,"t":1764624472,"vision":true,"lat":507,"tps":40,"oss":false},{"id":"openai/o3-mini-high","name":"OpenAI: o3 Mini High","prov":"openai","i":15.6,"c":16.3,"a":1.7,"pin":1.1,"pout":4.4,"b":1.925,"ctx":200000,"t":1739372611,"vision":false,"lat":null,"tps":null,"oss":false},{"id":"deepseek/deepseek-chat-v3-0324","name":"DeepSeek: DeepSeek V3 0324","prov":"deepseek","i":15.4,"c":21.2,"a":1.5,"pin":0.27,"pout":1.12,"b":0.4825,"ctx":163840,"t":1742824755,"vision":false,"lat":307,"tps":36,"oss":true},{"id":"openai/gpt-oss-20b","name":"OpenAI: gpt-oss-20b","prov":"openai","i":14.9,"c":20.7,"a":3.1,"pin":0.03,"pout":0.13,"b":0.055,"ctx":131072,"t":1754414229,"vision":false,"lat":282,"tps":266,"oss":true},{"id":"openai/gpt-oss-20b:free","name":"OpenAI: gpt-oss-20b (free)","prov":"openai","i":14.9,"c":20.7,"a":3.1,"pin":0,"pout":0,"b":0,"ctx":131072,"t":1754414229,"vision":false,"lat":3489,"tps":28,"oss":true},{"id":"openai/gpt-4.1-mini","name":"OpenAI: GPT-4.1 Mini","prov":"openai","i":14.8,"c":20.2,"a":1.7,"pin":0.4,"pout":1.6,"b":0.7,"ctx":1047576,"t":1744651381,"vision":true,"lat":623,"tps":79,"oss":false},{"id":"mistralai/mistral-medium-3.1","name":"Mistral: Mistral Medium 3.1","prov":"mistralai","i":14.7,"c":20.5,"a":6.2,"pin":0.4,"pout":2,"b":0.8,"ctx":131072,"t":1755095639,"vision":true,"lat":462,"tps":47,"oss":false},{"id":"qwen/qwen3-30b-a3b-thinking-2507","name":"Qwen: Qwen3 30B A3B Thinking 2507","prov":"qwen","i":14.4,"c":12.1,"a":1.8,"pin":0.2,"pout":2.4,"b":0.75,"ctx":81920,"t":1756399192,"vision":false,"lat":312,"tps":140,"oss":true},{"id":"meta-llama/llama-4-maverick","name":"Meta: Llama 4 Maverick","prov":"meta-llama","i":14.3,"c":16.3,"a":1.3,"pin":0.2,"pout":0.8,"b":0.35,"ctx":1048576,"t":1743881822,"vision":true,"lat":238,"tps":62,"oss":true},{"id":"nvidia/nemotron-3-nano-30b-a3b","name":"NVIDIA: Nemotron 3 Nano 30B A3B","prov":"nvidia","i":14.2,"c":14.4,"a":2,"pin":0.05,"pout":0.2,"b":0.0875,"ctx":262144,"t":1765731275,"vision":false,"lat":462,"tps":141,"oss":true},{"id":"nvidia/nemotron-3-nano-30b-a3b:free","name":"NVIDIA: Nemotron 3 Nano 30B A3B (free)","prov":"nvidia","i":14.2,"c":14.4,"a":2,"pin":0,"pout":0,"b":0,"ctx":256000,"t":1765731275,"vision":false,"lat":587,"tps":148,"oss":true},{"id":"inclusionai/ling-2.6-flash","name":"inclusionAI: Ling-2.6-flash","prov":"inclusionai","i":14.1,"c":25.3,"a":2.3,"pin":0.01,"pout":0.03,"b":0.015,"ctx":262144,"t":1776795886,"vision":false,"lat":650,"tps":72,"oss":false},{"id":"upstage/solar-pro-3","name":"Upstage: Solar Pro 3","prov":"upstage","i":14.1,"c":16.2,"a":2.7,"pin":0.15,"pout":0.6,"b":0.2625,"ctx":128000,"t":1769481200,"vision":false,"lat":987,"tps":35,"oss":false},{"id":"qwen/qwen3-32b","name":"Qwen: Qwen3 32B","prov":"qwen","i":11.5,"c":15.3,"a":1.8,"pin":0.08,"pout":0.28,"b":0.13,"ctx":131072,"t":1745875945,"vision":false,"lat":299,"tps":192,"oss":true},{"id":"mistralai/ministral-14b-2512","name":"Mistral: Ministral 3 14B 2512","prov":"mistralai","i":11.1,"c":14.4,"a":2.2,"pin":0.2,"pout":0.2,"b":0.2,"ctx":262144,"t":1764681735,"vision":true,"lat":1875,"tps":22,"oss":true},{"id":"qwen/qwen3-14b","name":"Qwen: Qwen3 14B","prov":"qwen","i":10.4,"c":13.8,"a":1.8,"pin":0.2275,"pout":0.91,"b":0.3981,"ctx":131072,"t":1745876478,"vision":false,"lat":368,"tps":47,"oss":true},{"id":"meta-llama/llama-4-scout","name":"Meta: Llama 4 Scout","prov":"meta-llama","i":10,"c":8.2,"a":1.1,"pin":0.1,"pout":0.3,"b":0.15,"ctx":1310720,"t":1743881519,"vision":true,"lat":283,"tps":128,"oss":true},{"id":"openai/gpt-4.1-nano","name":"OpenAI: GPT-4.1 Nano","prov":"openai","i":9.6,"c":11.1,"a":1.2,"pin":0.1,"pout":0.4,"b":0.175,"ctx":1047576,"t":1744651369,"vision":true,"lat":441,"tps":84,"oss":false}]/* FALLBACK:end */;
+let MODELS = FALLBACK;
+const W=980,H=580,M={t:22,r:26,b:56,l:60};
+const FREE_X=0.028, XMIN=0.022, XMAX=34;
+const lx=v=>Math.log10(Math.max(v,FREE_X));
+const $=s=>document.querySelector(s);
+
+function initProviders(){
+  const keep=$('#prov').value;
+  const provs=[...new Set(MODELS.map(m=>m.prov))].sort();
+  $('#prov').innerHTML='<option value="">All providers</option>'
+    +provs.map(p=>`<option>${p}</option>`).join('');
+  // A provider that survived the refresh keeps its selection; one that vanished falls back
+  // to "All" rather than leaving the dropdown pointing at something that no longer exists.
+  if(provs.includes(keep)) $('#prov').value=keep;
+}
+
+// Marker size = time to first token. Log-scaled: latency spans 137ms to 4.2s,
+// so a linear radius would make everything below 1s indistinguishable.
+const LAT_LO=150, LAT_HI=4500;
+const rOf=m=>{
+  if(m.lat==null) return 4;
+  const t=(Math.log10(Math.min(Math.max(m.lat,LAT_LO),LAT_HI))-Math.log10(LAT_LO))/(Math.log10(LAT_HI)-Math.log10(LAT_LO));
+  return 4+t*7;
+};
+const shortName=n=>n.replace(/^[^:]+:\s*/,'');
+
+// Throughput gets the color channel as a 5-step ordinal ramp. Buckets are cut near the
+// quartiles of the real distribution (8 to 504 tok/s) so each step holds a real share.
+const TPS_STOPS=[50,120];
+const tpsStep=m=>m.tps==null?0:TPS_STOPS.filter(s=>m.tps>=s).length+1;
+const tpsFill=m=>m.tps==null?'var(--tps-na)':`var(--tps-${tpsStep(m)})`;
+
+// Monthly timeline built from each model's OpenRouter listing date (the `created` field —
+// the closest thing to a release date the API gives us). The slider is cumulative: it shows
+// everything listed UP TO that month, which is what makes the frontier visibly march out.
+let MONTHS=[];
+function buildMonths(){
+  const ts=MODELS.map(m=>m.t).filter(Boolean);
+  if(!ts.length) return [];
+  const a=new Date(Math.min(...ts)*1000), b=new Date(Math.max(...ts)*1000);
+  const out=[];
+  for(let y=a.getUTCFullYear(),mo=a.getUTCMonth();y<b.getUTCFullYear()||(y===b.getUTCFullYear()&&mo<=b.getUTCMonth());){
+    out.push({y,mo,end:Date.UTC(y,mo+1,1)/1000});
+    if(++mo>11){mo=0;y++;}
+  }
+  return out;
+}
+const MONTH_NAMES=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function initMonths(){
+  const wasAtEnd = !MONTHS.length || +$('#asof').value===MONTHS.length-1;
+  MONTHS=buildMonths();
+  $('#asof').max=MONTHS.length-1;
+  // Live data can add a month on the end. Someone parked at "now" should stay at "now";
+  // someone who rewound deliberately should not be yanked forward.
+  if(wasAtEnd) $('#asof').value=MONTHS.length-1;
+}
+const cutoff=()=>MONTHS[+$('#asof').value].end;
+
+// Drag-select: a box drawn on the plot acts exactly like the text filter — everything
+// inside stays lit and labelled, everything else dims. Kept in viewBox units so it
+// survives the chart being re-rendered at a different pixel size.
+let brush=null;       // committed lasso polygon [[x,y],…], in viewBox units
+let selecting=false;  // is drag-to-select armed?
+
+// Presentation annotations. Arrows live in viewBox units like the lasso, so they stay
+// pinned to the same chart position no matter what size the SVG is rendered at, and they
+// survive every re-render (filter, sort, timeline) instead of being wiped by one.
+let arrows=[];
+let drawing=false;   // is arrow-drawing armed?
+
+// Standard ray-casting: count how many polygon edges a ray to the right crosses.
+// Odd means inside. Handles the concave shapes a freehand lasso produces.
+function inBrush(x,y){
+  if(!brush) return false;
+  let inside=false;
+  for(let i=0,j=brush.length-1;i<brush.length;j=i++){
+    const [xi,yi]=brush[i], [xj,yj]=brush[j];
+    if((yi>y)!==(yj>y) && x < (xj-xi)*(y-yi)/(yj-yi)+xi) inside=!inside;
+  }
+  return inside;
+}
+
+const lassoPath=pts=>'M'+pts.map(p=>p[0].toFixed(1)+' '+p[1].toFixed(1)).join('L')+'Z';
+
+// Arrows are drawn in the accent colour, not the frontier blue, so an annotation can never
+// be mistaken for data. They ignore pointer events; clicking to delete one is resolved by
+// distToArrow instead, which keeps the dots underneath fully hoverable.
+const ARROW_HEAD=`<defs><marker id="ah" viewBox="0 0 10 10" refX="8" refY="5"
+  markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+  <path d="M0 0L10 5L0 10z" fill="var(--series-2)"/></marker></defs>`;
+function arrowLayer(){
+  if(!arrows.length) return '';
+  return ARROW_HEAD + arrows.map(a=>
+    `<line x1="${a.x1}" y1="${a.y1}" x2="${a.x2}" y2="${a.y2}" stroke="var(--series-2)"
+       stroke-width="2.5" stroke-linecap="round" marker-end="url(#ah)" pointer-events="none"/>`
+  ).join('');
+}
+
+// Distance from a point to a line segment — used to decide which arrow a bare click hit.
+function distToArrow(a,px,py){
+  const dx=a.x2-a.x1, dy=a.y2-a.y1;
+  const len2=dx*dx+dy*dy;
+  const t=len2 ? Math.max(0,Math.min(1,((px-a.x1)*dx+(py-a.y1)*dy)/len2)) : 0;
+  return Math.hypot(px-(a.x1+t*dx), py-(a.y1+t*dy));
+}
+
+function pareto(rows,key){
+  rows.forEach(r=>r._p=false);
+  rows.forEach(r=>{
+    if(r[key]==null) return;
+    r._p=!rows.some(o=>o[key]!=null&&o.b<=r.b&&o[key]>=r[key]&&(o.b<r.b||o[key]>r[key]));
+  });
+  return rows.filter(r=>r._p).sort((a,b)=>a.b-b.b);
+}
+
+
+// Search terms are OR'd, so "luna" + "glm" shows both — the point is comparing a handful
+// of models or providers side by side, not narrowing to one. Enter or comma commits the
+// typed text as a chip; Backspace on an empty box removes the last chip. Terms match the
+// model id too, so a bare provider name like "anthropic" works as a term.
+let terms=[];
+// Whatever is half-typed counts as a term as well, so results move as you type instead of
+// only after you commit.
+function activeTerms(){
+  const typing=$('#q').value.trim().toLowerCase();
+  return typing && !terms.includes(typing) ? terms.concat(typing) : terms.slice();
+}
+function addTerm(){
+  const v=$('#q').value.trim().toLowerCase();
+  if(v && !terms.includes(v)) terms.push(v);
+  $('#q').value='';
+  render();
+}
+// Clicking a model — a dot on the chart or its name in the table — adds it to the search
+// filter. Uses the short name so the chip reads "claude opus 5" rather than the id-prefixed
+// "anthropic: claude opus 5"; both still match, since terms test name and id alike.
+function termFor(m){ return shortName(m.name).toLowerCase(); }
+function toggleTermForModel(id){
+  const m=MODELS.find(x=>x.id===id);
+  if(!m) return;
+  const t=termFor(m), i=terms.indexOf(t);
+  // Clicking a model that is already picked removes it, so the same click builds and
+  // unbuilds a comparison set without reaching for the chip's ×.
+  if(i>=0) terms.splice(i,1); else terms.push(t);
+  $('#q').value='';
+  render();
+}
+
+function renderChips(){
+  $('#chips').innerHTML=terms.map((t,i)=>
+    `<span class="chip">${t}<button data-i="${i}" aria-label="Remove filter ${t}">&times;</button></span>`).join('');
+  $('#chips').querySelectorAll('button').forEach(b=>{
+    b.onclick=()=>{ terms.splice(+b.dataset.i,1); render(); };
+  });
+}
+
+const fmtCtx=n=>{
+  if(!n) return '—';
+  if(n<1e6) return Math.round(n/1000)+'k';
+  return (n/1e6).toFixed(2).replace(/\.?0+$/,'')+'M';
+};
+
+// Table columns, one spec each. `v` is the sortable value (null always sinks to the
+// bottom whichever way we sort); `f` is what the cell shows; `dir` is the direction a
+// FIRST click applies — money and latency read best cheapest-first, scores fastest-first.
+const COLS=[
+  {h:()=>'Model', v:m=>m.name.toLowerCase(), f:m=>m.name, dir:1},
+  {h:()=>$('#metric').selectedOptions[0].text, v:(m,k)=>m[k], f:(m,k)=>m[k]??'—', dir:-1, good:'higher'},
+  {h:()=>'In $/M',      v:m=>m.pin,  f:m=>'$'+m.pin.toFixed(2),  dir:1, good:'lower'},
+  {h:()=>'Out $/M',     v:m=>m.pout, f:m=>'$'+m.pout.toFixed(2), dir:1, good:'lower'},
+  {h:()=>'Blended $/M', v:m=>m.b,    f:m=>'$'+m.b.toFixed(2),    dir:1, good:'lower'},
+  // Cost per index point — the table's version of "how far right of the frontier is this".
+  // Lower is better. Free models are a true 0, not a divide-by-zero; a zero or missing
+  // score has no meaningful ratio, so it shows an em dash rather than Infinity.
+  {h:()=>'$/M per point', v:(m,k)=>m[k]>0?m.b/m[k]:null,
+                          f:(m,k)=>m[k]>0?(m.b/m[k]).toFixed(3):'—', dir:1, good:'lower'},
+  {h:()=>'First token', v:m=>m.lat, f:m=>m.lat!=null?(m.lat/1000).toFixed(2)+'s':'—', dir:1, good:'lower'},
+  {h:()=>'Tok/s',       v:m=>m.tps, f:m=>m.tps??'—',            dir:-1, good:'higher'},
+  {h:()=>'Vision',      v:m=>m.vision?1:0, f:m=>m.vision?'yes':'no', dir:-1},
+  {h:()=>'Context',     v:m=>m.ctx, f:m=>fmtCtx(m.ctx), dir:-1, good:'higher'},
+];
+// 1 = ascending, -1 = descending. Kept outside render() so the reader's chosen sort
+// survives a filter change instead of snapping back to the default every keystroke.
+let sortCol=1, sortDir=-1;
+
+function renderTable(rows,key,meta){
+  const col=COLS[sortCol];
+  const sorted=[...rows].sort((a,b)=>{
+    const x=col.v(a,key), y=col.v(b,key);
+    if(x==null&&y==null) return 0;
+    if(x==null) return 1;
+    if(y==null) return -1;
+    return (x<y?-1:x>y?1:0)*sortDir;
+  });
+  const head=COLS.map((c,i)=>{
+    const on=i===sortCol;
+    return `<th data-i="${i}" tabindex="0" role="button" class="${on?'sorted':''}"
+      aria-sort="${on?(sortDir===1?'ascending':'descending'):'none'}" title="${c.good?`${c.h()} — ${c.good} is better. Click to sort`:`Click to sort by ${c.h()}`}"
+      >${c.h()}<span class="arrow${on?'':' idle'}">${on?(sortDir===1?'▲':'▼'):'↕'}</span></th>`;
+  }).join('');
+  const body=sorted.map(m=>`<tr data-id="${m.id}">`+COLS.map(c=>`<td>${c.f(m,key)}</td>`).join('')+'</tr>').join('');
+  // The toolbar count sits far above the rows, so a lasso or dropdown could reshape the
+  // table with no confirmation anywhere near it. This caption is that confirmation.
+  const caption = meta.active.length
+    ? `Showing <b>${rows.length}</b> of ${meta.total} models — ${meta.active.join(' + ')}`
+    : `All ${meta.total} models`;
+  $('#tablewrap').innerHTML=`<div class="tcap">${caption}</div>
+    <div style="overflow-x:auto"><table><thead><tr>${head}</tr></thead>
+    <tbody>${body}</tbody></table></div>`;
+  $('#tablewrap').querySelectorAll('th').forEach(th=>{
+    const sortBy=()=>{
+      const i=+th.dataset.i;
+      // Re-clicking the active column flips it; a new column starts in its natural direction.
+      if(i===sortCol) sortDir=-sortDir; else { sortCol=i; sortDir=COLS[i].dir; }
+      renderTable(rows,key,meta);
+    };
+    th.onclick=sortBy;
+    th.onkeydown=e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); sortBy(); } };
+  });
+}
+
+function render(){
+  const key=$('#metric').value, prov=$('#prov').value, oss=$('#oss').value;
+  const terms=activeTerms();
+  const asof=cutoff(), atEnd=+$('#asof').value===MONTHS.length-1;
+  const scored=MODELS.filter(m=>m[key]!=null);
+  const all=scored.filter(m=>m.t<=asof);
+  const front=pareto(all.slice(),key);
+  const frontIds=new Set(front.map(f=>f.id));
+  const ys=scored.map(m=>m[key]);
+  const y0=Math.floor(Math.min(...ys)/5)*5, y1=Math.ceil(Math.max(...ys)/5)*5;
+  const X=v=>M.l+(lx(v)-lx(XMIN))/(lx(XMAX)-lx(XMIN))*(W-M.l-M.r);
+  const Y=v=>H-M.b-(v-y0)/(y1-y0)*(H-M.t-M.b);
+
+  const match=m=>(!prov||m.prov===prov)
+    &&(!oss||String(m.oss?1:0)===oss)
+    &&(!terms.length||terms.some(t=>m.name.toLowerCase().includes(t)||m.id.toLowerCase().includes(t)))
+    &&(!brush||inBrush(X(m.b),Y(m[key])));
+  const rows=all.filter(match);
+  const filtering=!!(prov||terms.length||oss||brush);
+
+  // Axes stay pinned to the full dataset so the frontier visibly grows into the space
+  // instead of the chart rescaling under it every step.
+  let g='';
+  for(let v=y0;v<=y1;v+=5){
+    g+=`<line x1="${M.l}" x2="${W-M.r}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--grid)" stroke-width="1"/>`;
+    g+=`<text class="tick" x="${M.l-9}" y="${Y(v)+4}" text-anchor="end">${v}</text>`;
+  }
+  // Gridlines double: every line to the right is exactly 2x the price of the one before it.
+  const priceTicks=[[FREE_X,'free']];
+  for(let e=-4;e<=5;e++){
+    const v=Math.pow(2,e);
+    priceTicks.push([v, v<1 ? '$'+v.toFixed(2) : '$'+v]);
+  }
+  priceTicks.forEach(([v,l])=>{
+    g+=`<line x1="${X(v)}" x2="${X(v)}" y1="${M.t}" y2="${H-M.b}" stroke="var(--grid)" stroke-width="1" ${v===FREE_X?'stroke-dasharray="3 3"':''}/>`;
+    g+=`<text class="tick" x="${X(v)}" y="${H-M.b+18}" text-anchor="middle">${l}</text>`;
+  });
+  g+=`<line x1="${M.l}" x2="${W-M.r}" y1="${H-M.b}" y2="${H-M.b}" stroke="var(--axis)" stroke-width="1"/>`;
+  g+=`<text class="axlabel" x="${M.l+(W-M.l-M.r)/2}" y="${H-12}" text-anchor="middle">Blended price (3 in : 1 out), $ per million tokens — price doubles each vertical line</text>`;
+  g+=`<text class="axlabel" transform="translate(16,${M.t+(H-M.t-M.b)/2}) rotate(-90)" text-anchor="middle">${$('#metric').selectedOptions[0].text}</text>`;
+
+  // Ghost frontiers every 6 months before the current cutoff — the trail the frontier left.
+  // Each one is date-stamped at its right end, otherwise the dashes read as noise.
+  for(let k=0;k<+$('#asof').value;k+=6){
+    const mth=MONTHS[k];
+    const past=pareto(scored.filter(m=>m.t<=mth.end),key);
+    if(past.length<2) continue;
+    g+=`<polyline fill="none" stroke="var(--frontier)" stroke-width="1.5" stroke-linejoin="round"
+        stroke-dasharray="4 4" opacity="0.3" points="${past.map(f=>X(f.b)+','+Y(f[key])).join(' ')}"/>`;
+    const tip=past[past.length-1];
+    g+=`<text class="ghostlabel" x="${X(tip.b)+8}" y="${Y(tip[key])+3.5}">${MONTH_NAMES[mth.mo]} ${String(mth.y).slice(2)}</text>`;
+  }
+  g+=`<polyline fill="none" stroke="var(--frontier)" stroke-width="2" stroke-linejoin="round"
+      points="${front.map(f=>X(f.b)+','+Y(f[key])).join(' ')}" opacity="${filtering?0.3:1}"/>`;
+
+  const mark=m=>{
+    // The frontier is identified by its connecting line and direct labels, not by the mark.
+    const fill=tpsFill(m);
+    const dim=filtering&&!match(m);
+    const x=X(m.b), y=Y(m[key]), r=rOf(m), o=dim?0.1:0.92;
+    if(m.vision) return `<circle class="pt" data-id="${m.id}" cx="${x}" cy="${y}" r="${r}"
+      fill="${fill}" stroke="var(--surface-1)" stroke-width="2" opacity="${o}"/>`;
+    const d=r*0.8, sw=Math.max(1.8,r*0.36);
+    const X1=`M${x-d} ${y-d}L${x+d} ${y+d}M${x+d} ${y-d}L${x-d} ${y+d}`;
+    return `<g class="pt" data-id="${m.id}" opacity="${o}">
+      <path d="${X1}" stroke="var(--surface-1)" stroke-width="${sw+3}" stroke-linecap="round"/>
+      <path d="${X1}" stroke="${fill}" stroke-width="${sw}" stroke-linecap="round"/></g>`;
+  };
+  g+=all.filter(m=>!frontIds.has(m.id)).sort((a,b)=>rOf(b)-rOf(a)).map(mark).join('');
+  g+=all.filter(m=>frontIds.has(m.id)).map(mark).join('');
+
+  // Label the frontier by default; once a filter narrows things down, label what survived
+  // instead — that's what the reader is looking at. Never label all 100 at once.
+  // While filtering, every surviving model gets a label — that IS the answer to the query.
+  const labelSet = filtering ? rows : front;
+  {
+    // Only other LABELS reserve space. Dots block a much smaller box (checked separately),
+    // otherwise a cluster of frontier dots shoves its own labels far down the plot.
+    const placed=[];
+    const dots=labelSet.map(f=>({x:X(f.b),y:Y(f[key]),r:rOf(f)}));
+    labelSet.forEach((f,i)=>{
+      const px=X(f.b), py=Y(f[key]);
+      const anchor = px<M.l+70 ? 'start' : (px>W-150 ? 'end' : 'middle');
+      // Try above/below at growing offsets; take the first slot that clears every
+      // already-placed label and dot, and never leave the plot area.
+      const up=rOf(f)+8, down=rOf(f)+16;
+      const cands=[];
+      for(let k=0;k<20;k++){ cands.push(py-up-k*12); cands.push(py+down+k*12); }
+      // Tighter horizontal window when many labels are on screen, or a crowded filter
+      // (e.g. all 15 qwen models) would push the last few clean off the plot.
+      const winX = labelSet.length>10 ? 74 : 100;
+      const clear=ly=> !placed.some(p=>Math.abs(p.x-px)<winX && Math.abs(p.y-ly)<12)
+                    && !dots.some(d=>Math.abs(d.x-px)<52 && Math.abs(d.y-ly)<d.r+4);
+      // Nearest slot wins, so a label never drifts further from its dot than it has to.
+      const free=cands.filter(ly=>ly>M.t+8 && ly<H-M.b-4 && clear(ly))
+        .sort((a,b)=>Math.abs(a-py)-Math.abs(b-py))[0];
+      const ly = free ?? py-up;
+      placed.push({x:px,y:ly});
+      const ax = anchor==='start'?px-9:(anchor==='end'?px+9:px);
+      // When crowding pushes a label off its mark, draw a hairline so ownership is unambiguous.
+      const gap = ly<py ? py-rOf(f)-ly-4 : ly-py-rOf(f)-11;
+      if(gap>6){
+        const y1 = ly<py ? py-rOf(f)-2 : py+rOf(f)+2;
+        const y2 = ly<py ? ly+3 : ly-9;
+        g+=`<line x1="${px}" x2="${px}" y1="${y1}" y2="${y2}" stroke="var(--axis)" stroke-width="1"/>`;
+      }
+      g+=`<text class="dotlabel" x="${ax}" y="${ly}" text-anchor="${anchor}">${shortName(f.name)}</text>`;
+    });
+  }
+
+  if(brush){
+    g += `<path d="${lassoPath(brush)}" fill="var(--frontier)" fill-opacity="0.06"
+      stroke="var(--frontier)" stroke-width="1" stroke-dasharray="4 3"/>`;
+  }
+  g += arrowLayer();
+
+  // Draw the chart whenever anything is listed by this date, even if the filter matches
+  // nothing — every dot dims and the reader keeps the axes, the frontier, and a view of
+  // where their search would land. Replacing the whole plot with a sentence threw all of
+  // that away. The bare message is only for a date so early that no model exists yet.
+  $('#plot').innerHTML = all.length
+    ? `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img"
+        aria-label="Price versus ${$('#metric').selectedOptions[0].text.toLowerCase()} for ${all.length} models">${g}</svg>`
+       + (rows.length ? '' : `<div class="nomatch">Nothing listed by ${MONTH_NAMES[MONTHS[+$('#asof').value].mo]} ${MONTHS[+$('#asof').value].y} matches ${terms.map(t=>`“${t}”`).join(' or ')} — try a later month.</div>`)
+    : `<div class="empty">No models listed this early. Move the timeline forward.</div>`;
+
+  // A rewound timeline has to keep announcing itself. The old wording only mentioned the
+  // date when nothing else was filtered, so "3 of 74 shown" silently hid the fact that the
+  // missing models simply weren't listed yet.
+  const mth=MONTHS[+$('#asof').value];
+  const asofLabel=`${MONTH_NAMES[mth.mo]} ${mth.y}`;
+  const asofNote = atEnd ? '' : ` · ${all.length} of ${scored.length} listed by ${asofLabel}`;
+  $('#count').textContent = (filtering
+    ? `${rows.length} of ${all.length} ${brush&&!terms.length&&!prov?'selected':'shown'}`
+    : `${all.length} models`) + asofNote;
+
+  // Name each active filter so the table caption can spell out why rows disappeared.
+  const active=[];
+  if(terms.length) active.push('matching '+terms.map(t=>`“${t}”`).join(' or '));
+  if(prov) active.push(prov);
+  if(oss) active.push(oss==='1'?'open weights':'closed weights');
+  if(brush) active.push('lasso selection');
+  if(!atEnd) active.push(`listed by ${asofLabel}`);
+  renderTable(rows,key,{total:all.length,active});
+  renderChips();
+
+  bindTips();
+  bindBrush();
+}
+
+// Pointer events are taken on the <svg>, so a drag that starts on top of a dot still
+// brushes instead of being swallowed by the mark.
+function bindBrush(){
+  const svg=document.querySelector('svg.chart');
+  if(!svg) return;
+  svg.style.cursor = (selecting||drawing) ? 'crosshair' : 'default';
+  const toView=e=>{
+    const r=svg.getBoundingClientRect();
+    return {x:(e.clientX-r.left)/r.width*W, y:(e.clientY-r.top)/r.height*H};
+  };
+  let start=null, live=null, trail=null;
+  const NS='http://www.w3.org/2000/svg';
+  svg.addEventListener('pointerdown',e=>{
+    if(e.button!==0||!(selecting||drawing)) return;
+    start=toView(e);
+    // Capture keeps the drag alive if the pointer leaves the svg; harmless if it fails.
+    try{ svg.setPointerCapture(e.pointerId); }catch{}
+    $('#tip').style.opacity=0;
+    if(drawing){
+      live=document.createElementNS(NS,'line');
+      live.setAttribute('stroke','var(--series-2)'); live.setAttribute('stroke-width','2.5');
+      live.setAttribute('stroke-linecap','round'); live.setAttribute('pointer-events','none');
+      for(const [k,v] of [['x1',start.x],['y1',start.y],['x2',start.x],['y2',start.y]]) live.setAttribute(k,v);
+      svg.appendChild(live);
+      return;
+    }
+    trail=[[start.x,start.y]];
+    live=document.createElementNS(NS,'path');
+    live.setAttribute('fill','var(--frontier)'); live.setAttribute('fill-opacity','0.06');
+    live.setAttribute('stroke','var(--frontier)'); live.setAttribute('stroke-width','1');
+    live.setAttribute('stroke-dasharray','4 3'); live.setAttribute('pointer-events','none');
+    svg.appendChild(live);
+  });
+  svg.addEventListener('pointermove',e=>{
+    if(!start||!live) return;
+    const p=toView(e);
+    if(drawing){ live.setAttribute('x2',p.x); live.setAttribute('y2',p.y); return; }
+    // Thin the trail: sub-3px moves add nothing to the shape and just cost points.
+    const last=trail[trail.length-1];
+    if(Math.hypot(p.x-last[0],p.y-last[1])<3) return;
+    trail.push([p.x,p.y]);
+    live.setAttribute('d',lassoPath(trail));
+  });
+  svg.addEventListener('pointerup',e=>{
+    if(!start) return;
+    const p=toView(e);
+    if(drawing){
+      // A bare click adds nothing — it deletes the arrow under the cursor instead, so
+      // there is a way to remove one arrow without wiping the whole drawing.
+      if(Math.hypot(p.x-start.x,p.y-start.y)<10){
+        const hit=arrows.findIndex(a=>distToArrow(a,start.x,start.y)<10);
+        if(hit>=0) arrows.splice(hit,1);
+      } else {
+        arrows.push({x1:+start.x.toFixed(1),y1:+start.y.toFixed(1),
+                     x2:+p.x.toFixed(1),   y2:+p.y.toFixed(1)});
+      }
+      start=null; live=null; syncClear(); render();
+      return;
+    }
+    // A plain click (no real drag) clears whatever selection was there.
+    brush = trail.length<4 ? null : trail;
+    start=null; live=null; trail=null;
+    syncClear(); render();
+  });
+}
+
+function syncClear(){
+  $('#clear').classList.toggle('hide',!brush);
+  $('#clearArrows').classList.toggle('hide',!arrows.length);
+}
+function syncMode(){
+  $('#mode').classList.toggle('on',selecting);
+  $('#mode').setAttribute('aria-pressed',String(selecting));
+}
+function syncDraw(){
+  $('#draw').classList.toggle('on',drawing);
+  $('#draw').setAttribute('aria-pressed',String(drawing));
+}
+
+function bindTips(){
+  const tip=$('#tip');
+  document.querySelectorAll('.pt').forEach(el=>{
+    el.addEventListener('mouseenter',()=>{
+      const m=MODELS.find(x=>x.id===el.dataset.id);
+      tip.innerHTML=`<b>${m.name}</b><span>${m.id}</span><br>
+        <span>Intelligence</span> ${m.i??'—'} · <span>Coding</span> ${m.c??'—'} · <span>Agentic</span> ${m.a??'—'}<br>
+        <span>In</span> $${m.pin.toFixed(2)}/M · <span>Out</span> $${m.pout.toFixed(2)}/M · <span>blended</span> $${m.b.toFixed(2)}/M<br>
+        <span>First token</span> ${m.lat!=null?(m.lat/1000).toFixed(2)+'s':'—'} · <span>${m.tps??'—'} tok/s</span><br>
+        <span>Input</span> ${m.vision?'text + images':'text only'}${m._p?' · <b style="display:inline;color:var(--frontier)">on frontier</b>':''}
+        ${(selecting||drawing)?'':`<br><span>Click to ${terms.includes(termFor(m))?'remove from':'add to'} the filter</span>`}`;
+      tip.style.opacity=1;
+    });
+    el.addEventListener('mousemove',e=>{
+      tip.style.left=Math.min(e.clientX+14,innerWidth-300)+'px';
+      tip.style.top=Math.min(e.clientY+14,innerHeight-140)+'px';
+    });
+    el.addEventListener('mouseleave',()=>tip.style.opacity=0);
+    // Lasso mode owns the pointer while it is armed, so clicks must not also add terms.
+    el.style.cursor = (selecting||drawing) ? 'crosshair' : 'pointer';
+    el.addEventListener('click',()=>{ if(!selecting&&!drawing) toggleTermForModel(el.dataset.id); });
+  });
+}
+
+function stamp(){
+  const m=MONTHS[+$('#asof').value];
+  $('#asofLabel').textContent=`${MONTH_NAMES[m.mo]} ${m.y}`;
+}
+$('#asof').oninput=()=>{stamp();render();};
+
+// Play walks the slider forward a month at a time; pressing it at the end rewinds first.
+let timer=null;
+$('#play').onclick=()=>{
+  if(timer){ clearInterval(timer); timer=null; $('#play').textContent='▶ Play'; return; }
+  if(+$('#asof').value>=MONTHS.length-1) $('#asof').value=0;
+  $('#play').textContent='❚❚ Pause';
+  stamp(); render();
+  timer=setInterval(()=>{
+    const v=+$('#asof').value;
+    if(v>=MONTHS.length-1){ clearInterval(timer); timer=null; $('#play').textContent='▶ Play'; return; }
+    $('#asof').value=v+1; stamp(); render();
+  },550);
+};
+
+// Drag-to-select is armed by this switch, so an accidental drag never eats a click.
+// Lasso and arrow both claim the drag gesture, so arming one disarms the other.
+$('#mode').onclick=()=>{
+  selecting=!selecting;
+  if(selecting) drawing=false;
+  brush=null; syncMode(); syncDraw(); syncClear(); render();
+};
+$('#draw').onclick=()=>{
+  drawing=!drawing;
+  if(drawing) selecting=false;
+  syncMode(); syncDraw(); render();
+};
+$('#clear').onclick=()=>{ brush=null; syncClear(); render(); };
+$('#clearArrows').onclick=()=>{ arrows=[]; syncClear(); render(); };
+addEventListener('keydown',e=>{ if(e.key==='Escape'&&brush){ brush=null; syncClear(); render(); } });
+
+$('#prov').onchange=render; $('#metric').onchange=render; $('#oss').onchange=render;
+$('#q').oninput=render;
+$('#q').onkeydown=e=>{
+  if(e.key==='Enter'||e.key===','){ e.preventDefault(); addTerm(); }
+  else if(e.key==='Backspace' && !$('#q').value && terms.length){ terms.pop(); render(); }
+};
+$('#toggle').onclick=()=>{
+  const showing=$('#tablewrap').classList.toggle('hide')===false;
+  $('#plot').classList.toggle('hide',showing);
+  $('#toggle').textContent=showing?'Show chart':'Show table';
+};
+// Boot: draw the snapshot straight away so there is never an empty frame, then ask the
+// edge function for fresh numbers. A failed or missing /api/models (opening the file off
+// disk, an OpenRouter blip) simply leaves the snapshot on screen.
+function boot(){
+  initProviders();
+  initMonths();
+  stamp();
+  render();
+}
+boot();
+
+fetch('/api/models')
+  .then(r => r.ok ? r.json() : null)
+  .then(data => {
+    if(!Array.isArray(data) || !data.length) return;
+    MODELS = data;
+    boot();
+    $('#freshness').textContent = 'Live prices from OpenRouter, cached up to an hour.';
+  })
+  .catch(() => {});
+</script>
+
+</body>
+</html>
