@@ -139,9 +139,7 @@ th:hover .arrow.idle{opacity:.85}
   </select>
   <button id="toggle">Show table</button>
   <button id="mode" aria-pressed="false">✏️ Lasso select</button>
-  <button id="draw" aria-pressed="false">➜ Add arrow</button>
   <button id="clear" class="hide">Clear selection</button>
-  <button id="clearArrows" class="hide">Clear arrows</button>
   <span class="count" id="count"></span>
 </div>
 
@@ -267,12 +265,6 @@ const cutoff=()=>STOPS[+$('#asof').value]?.end ?? Infinity;
 let brush=null;       // committed lasso polygon [[x,y],…], in viewBox units
 let selecting=false;  // is drag-to-select armed?
 
-// Presentation annotations. Arrows live in viewBox units like the lasso, so they stay
-// pinned to the same chart position no matter what size the SVG is rendered at, and they
-// survive every re-render (filter, sort, timeline) instead of being wiped by one.
-let arrows=[];
-let drawing=false;   // is arrow-drawing armed?
-
 // Standard ray-casting: count how many polygon edges a ray to the right crosses.
 // Odd means inside. Handles the concave shapes a freehand lasso produces.
 function inBrush(x,y){
@@ -286,28 +278,6 @@ function inBrush(x,y){
 }
 
 const lassoPath=pts=>'M'+pts.map(p=>p[0].toFixed(1)+' '+p[1].toFixed(1)).join('L')+'Z';
-
-// Arrows are drawn in the accent colour, not the frontier blue, so an annotation can never
-// be mistaken for data. They ignore pointer events; clicking to delete one is resolved by
-// distToArrow instead, which keeps the dots underneath fully hoverable.
-const ARROW_HEAD=`<defs><marker id="ah" viewBox="0 0 10 10" refX="8" refY="5"
-  markerWidth="5" markerHeight="5" orient="auto-start-reverse">
-  <path d="M0 0L10 5L0 10z" fill="var(--series-2)"/></marker></defs>`;
-function arrowLayer(){
-  if(!arrows.length) return '';
-  return ARROW_HEAD + arrows.map(a=>
-    `<line x1="${a.x1}" y1="${a.y1}" x2="${a.x2}" y2="${a.y2}" stroke="var(--series-2)"
-       stroke-width="2.5" stroke-linecap="round" marker-end="url(#ah)" pointer-events="none"/>`
-  ).join('');
-}
-
-// Distance from a point to a line segment — used to decide which arrow a bare click hit.
-function distToArrow(a,px,py){
-  const dx=a.x2-a.x1, dy=a.y2-a.y1;
-  const len2=dx*dx+dy*dy;
-  const t=len2 ? Math.max(0,Math.min(1,((px-a.x1)*dx+(py-a.y1)*dy)/len2)) : 0;
-  return Math.hypot(px-(a.x1+t*dx), py-(a.y1+t*dy));
-}
 
 function pareto(rows,key){
   rows.forEach(r=>r._p=false);
@@ -553,7 +523,6 @@ function render(){
     g += `<path d="${lassoPath(brush)}" fill="var(--frontier)" fill-opacity="0.06"
       stroke="var(--frontier)" stroke-width="1" stroke-dasharray="4 3"/>`;
   }
-  g += arrowLayer();
 
   // Draw the chart whenever anything is listed by this date, even if the filter matches
   // nothing — every dot dims and the reader keeps the axes, the frontier, and a view of
@@ -622,7 +591,7 @@ addEventListener('resize',syncYAxis);
 function bindBrush(){
   const svg=document.querySelector('svg.chart');
   if(!svg) return;
-  svg.style.cursor = (selecting||drawing) ? 'crosshair' : 'default';
+  svg.style.cursor = selecting ? 'crosshair' : 'default';
   const toView=e=>{
     const r=svg.getBoundingClientRect();
     return {x:(e.clientX-r.left)/r.width*W, y:(e.clientY-r.top)/r.height*H};
@@ -630,19 +599,11 @@ function bindBrush(){
   let start=null, live=null, trail=null;
   const NS='http://www.w3.org/2000/svg';
   svg.addEventListener('pointerdown',e=>{
-    if(e.button!==0||!(selecting||drawing)) return;
+    if(e.button!==0||!selecting) return;
     start=toView(e);
     // Capture keeps the drag alive if the pointer leaves the svg; harmless if it fails.
     try{ svg.setPointerCapture(e.pointerId); }catch{}
     $('#tip').style.opacity=0;
-    if(drawing){
-      live=document.createElementNS(NS,'line');
-      live.setAttribute('stroke','var(--series-2)'); live.setAttribute('stroke-width','2.5');
-      live.setAttribute('stroke-linecap','round'); live.setAttribute('pointer-events','none');
-      for(const [k,v] of [['x1',start.x],['y1',start.y],['x2',start.x],['y2',start.y]]) live.setAttribute(k,v);
-      svg.appendChild(live);
-      return;
-    }
     trail=[[start.x,start.y]];
     live=document.createElementNS(NS,'path');
     live.setAttribute('fill','var(--frontier)'); live.setAttribute('fill-opacity','0.06');
@@ -653,29 +614,14 @@ function bindBrush(){
   svg.addEventListener('pointermove',e=>{
     if(!start||!live) return;
     const p=toView(e);
-    if(drawing){ live.setAttribute('x2',p.x); live.setAttribute('y2',p.y); return; }
     // Thin the trail: sub-3px moves add nothing to the shape and just cost points.
     const last=trail[trail.length-1];
     if(Math.hypot(p.x-last[0],p.y-last[1])<3) return;
     trail.push([p.x,p.y]);
     live.setAttribute('d',lassoPath(trail));
   });
-  svg.addEventListener('pointerup',e=>{
+  svg.addEventListener('pointerup',()=>{
     if(!start) return;
-    const p=toView(e);
-    if(drawing){
-      // A bare click adds nothing — it deletes the arrow under the cursor instead, so
-      // there is a way to remove one arrow without wiping the whole drawing.
-      if(Math.hypot(p.x-start.x,p.y-start.y)<10){
-        const hit=arrows.findIndex(a=>distToArrow(a,start.x,start.y)<10);
-        if(hit>=0) arrows.splice(hit,1);
-      } else {
-        arrows.push({x1:+start.x.toFixed(1),y1:+start.y.toFixed(1),
-                     x2:+p.x.toFixed(1),   y2:+p.y.toFixed(1)});
-      }
-      start=null; live=null; syncClear(); render();
-      return;
-    }
     // A plain click (no real drag) clears whatever selection was there.
     brush = trail.length<4 ? null : trail;
     start=null; live=null; trail=null;
@@ -685,15 +631,10 @@ function bindBrush(){
 
 function syncClear(){
   $('#clear').classList.toggle('hide',!brush);
-  $('#clearArrows').classList.toggle('hide',!arrows.length);
 }
 function syncMode(){
   $('#mode').classList.toggle('on',selecting);
   $('#mode').setAttribute('aria-pressed',String(selecting));
-}
-function syncDraw(){
-  $('#draw').classList.toggle('on',drawing);
-  $('#draw').setAttribute('aria-pressed',String(drawing));
 }
 
 // The tooltip opens on mouseenter and closes on mouseleave, which is fine with a mouse and
@@ -718,7 +659,7 @@ function bindTips(){
         <span>In</span> $${m.pin.toFixed(2)}/M · <span>Out</span> $${m.pout.toFixed(2)}/M · <span>blended</span> $${m.b.toFixed(2)}/M<br>
         <span>First token</span> ${m.lat!=null?(m.lat/1000).toFixed(2)+'s':'—'} · <span>${m.tps??'—'} tok/s</span><br>
         <span>Input</span> ${m.vision?'text + images':'text only'}${m._p?' · <b style="display:inline;color:var(--frontier)">on frontier</b>':''}
-        ${(selecting||drawing)?'':`<br><span>Click to ${terms.includes(termFor(m))?'remove from':'add to'} the filter</span>`}`;
+        ${selecting?'':`<br><span>Click to ${terms.includes(termFor(m))?'remove from':'add to'} the filter</span>`}`;
       tip.style.opacity=1;
     });
     el.addEventListener('mousemove',e=>{
@@ -727,8 +668,8 @@ function bindTips(){
     });
     el.addEventListener('mouseleave',()=>tip.style.opacity=0);
     // Lasso mode owns the pointer while it is armed, so clicks must not also add terms.
-    el.style.cursor = (selecting||drawing) ? 'crosshair' : 'pointer';
-    el.addEventListener('click',()=>{ if(!selecting&&!drawing) toggleTermForModel(el.dataset.id); });
+    el.style.cursor = selecting ? 'crosshair' : 'pointer';
+    el.addEventListener('click',()=>{ if(!selecting) toggleTermForModel(el.dataset.id); });
   });
 }
 
@@ -754,19 +695,11 @@ $('#play').onclick=()=>{
 };
 
 // Drag-to-select is armed by this switch, so an accidental drag never eats a click.
-// Lasso and arrow both claim the drag gesture, so arming one disarms the other.
 $('#mode').onclick=()=>{
   selecting=!selecting;
-  if(selecting) drawing=false;
-  brush=null; syncMode(); syncDraw(); syncClear(); render();
-};
-$('#draw').onclick=()=>{
-  drawing=!drawing;
-  if(drawing) selecting=false;
-  syncMode(); syncDraw(); render();
+  brush=null; syncMode(); syncClear(); render();
 };
 $('#clear').onclick=()=>{ brush=null; syncClear(); render(); };
-$('#clearArrows').onclick=()=>{ arrows=[]; syncClear(); render(); };
 addEventListener('keydown',e=>{ if(e.key==='Escape'&&brush){ brush=null; syncClear(); render(); } });
 
 $('#prov').onchange=render; $('#metric').onchange=render; $('#oss').onchange=render;
