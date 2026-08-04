@@ -696,6 +696,18 @@ function syncDraw(){
   $('#draw').setAttribute('aria-pressed',String(drawing));
 }
 
+// The tooltip opens on mouseenter and closes on mouseleave, which is fine with a mouse and
+// broken with a finger: a tap fires mouseenter but mouseleave never comes, so the card sits
+// there with no way to dismiss it. These two close it the way any popover is expected to —
+// tap anywhere off a mark, or scroll. Bound once on the document, not per-render, because
+// the marks are replaced on every redraw and the outside is not.
+// Capture phase, so tapping a DIFFERENT mark still closes this card before that mark's own
+// mouseenter reopens it with the new model.
+const hideTip=()=>{ $('#tip').style.opacity=0; };
+addEventListener('pointerdown',e=>{ if(!e.target.closest('.pt')) hideTip(); },true);
+// The tip is position:fixed, so any scroll leaves it stranded away from its dot.
+addEventListener('scroll',hideTip,true);
+
 function bindTips(){
   const tip=$('#tip');
   document.querySelectorAll('.pt').forEach(el=>{
