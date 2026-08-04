@@ -71,8 +71,17 @@ input:focus{outline:2px solid var(--series-1);outline-offset:-1px}
 .legend{display:flex;gap:18px;flex-wrap:wrap;font-size:12.5px;color:var(--text-secondary);
   margin:2px 4px 6px;align-items:center}
 .legend svg{vertical-align:-3px;margin-right:5px}
+.plotwrap{position:relative}
 .plot{overflow-x:auto}
 svg.chart{display:block;min-width:680px;width:100%;height:auto}
+/* On a narrow screen the chart is wider than the card and scrolls sideways, taking the
+   y-axis with it — the dots then have no scale to read against. This pane holds a second
+   copy of the axis, pinned outside the scroller so it stays put. It sits directly on top
+   of the real axis at scroll 0, so nothing looks doubled. */
+.yaxis{position:absolute;left:0;top:0;overflow:hidden;pointer-events:none;
+  background:var(--surface-1);transition:box-shadow .15s}
+.yaxis.floating{box-shadow:6px 0 8px -6px rgba(0,0,0,.28)}
+.yaxis svg{display:block}
 .tick{font-size:11px;fill:var(--muted)}
 .axlabel{font-size:12px;fill:var(--text-secondary)}
 .ghostlabel{font-size:10px;fill:var(--muted);
@@ -150,7 +159,7 @@ th:hover .arrow.idle{opacity:.85}
     <span><svg width="46" height="14"><circle cx="6" cy="7" r="4" fill="var(--muted)"/><circle cx="20" cy="7" r="6" fill="var(--muted)"/><circle cx="37" cy="7" r="8.5" fill="var(--muted)"/></svg>Slower first token &rarr;</span>
     <span><svg width="48" height="13"><circle cx="6" cy="6.5" r="5" fill="var(--tps-1)"/><circle cx="21" cy="6.5" r="5" fill="var(--tps-2)"/><circle cx="36" cy="6.5" r="5" fill="var(--tps-3)"/></svg>tokens per second (slow &rarr; fast)</span>
   </div>
-  <div class="plot" id="plot"></div>
+  <div class="plotwrap"><div class="plot" id="plot"></div><div class="yaxis" id="yaxis" aria-hidden="true"></div></div>
   <div id="tablewrap" class="hide" style="padding:6px 4px 12px"></div>
 </div>
 <p class="foot">Data via <a href="https://openrouter.ai/">OpenRouter</a> · scores by
@@ -442,10 +451,14 @@ function render(){
   // Axes stay pinned to the full dataset so the frontier visibly grows into the space
   // instead of the chart rescaling under it every step.
   let g='';
+  // Everything that lives inside the left margin is collected separately as well, so the
+  // pinned axis pane can redraw the identical marks at the identical coordinates.
+  let yMarks='';
   for(let v=y0;v<=y1;v+=5){
     g+=`<line x1="${M.l}" x2="${W-M.r}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--grid)" stroke-width="1"/>`;
-    g+=`<text class="tick" x="${M.l-9}" y="${Y(v)+4}" text-anchor="end">${v}</text>`;
+    yMarks+=`<text class="tick" x="${M.l-9}" y="${Y(v)+4}" text-anchor="end">${v}</text>`;
   }
+  g+=yMarks;
   // Gridlines double: every line to the right is exactly 2x the price of the one before it.
   const priceTicks=[[FREE_X,'free']];
   for(let e=-4;e<=5;e++){
@@ -458,7 +471,9 @@ function render(){
   });
   g+=`<line x1="${M.l}" x2="${W-M.r}" y1="${H-M.b}" y2="${H-M.b}" stroke="var(--axis)" stroke-width="1"/>`;
   g+=`<text class="axlabel" x="${M.l+(W-M.l-M.r)/2}" y="${H-12}" text-anchor="middle">Blended price (3 in : 1 out), $ per million tokens — price doubles each vertical line</text>`;
-  g+=`<text class="axlabel" transform="translate(16,${M.t+(H-M.t-M.b)/2}) rotate(-90)" text-anchor="middle">${$('#metric').selectedOptions[0].text}</text>`;
+  const yTitle=`<text class="axlabel" transform="translate(16,${M.t+(H-M.t-M.b)/2}) rotate(-90)" text-anchor="middle">${$('#metric').selectedOptions[0].text}</text>`;
+  g+=yTitle;
+  yMarks+=yTitle;
 
   // Ghost frontiers roughly every six months before the current cutoff — the trail the
   // frontier left. Spaced by DATE, not by stop index: the recent window steps weekly, so
@@ -555,6 +570,8 @@ function render(){
   $('#plot').innerHTML = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img"
       aria-label="Price versus ${$('#metric').selectedOptions[0].text.toLowerCase()} for ${all.length} models">${g}</svg>`
     + (noMatch ? `<div class="nomatch">Nothing listed by ${STOPS[+$('#asof').value].label} matches ${terms.map(t=>`“${t}”`).join(' or ')} — try a later month.</div>` : '');
+  $('#yaxis').innerHTML=`<svg viewBox="0 0 ${W} ${H}">${yMarks}</svg>`;
+  syncYAxis();
 
   // A rewound timeline has to keep announcing itself. The old wording only mentioned the
   // date when nothing else was filtered, so "3 of 74 shown" silently hid the fact that the
@@ -579,6 +596,26 @@ function render(){
   bindTips();
   bindBrush();
 }
+
+// The pinned axis has to sit exactly on top of the real one, at the same scale. The chart
+// svg carries a min-width, so on a narrow screen it renders WIDER than its container and a
+// percentage-based overlay would land in the wrong place — measure the svg instead.
+function syncYAxis(){
+  const svg=document.querySelector('svg.chart'), pane=$('#yaxis'), inner=pane.firstElementChild;
+  if(!svg||!inner) return;
+  const w=svg.getBoundingClientRect().width;
+  if(!w) return;
+  inner.setAttribute('width',w);
+  inner.setAttribute('height',w*H/W);
+  pane.style.width=(w*M.l/W)+'px';
+  pane.style.height=(w*H/W)+'px';
+}
+// The shadow only appears once something has actually scrolled under the axis; at rest the
+// pane is invisible because it matches the axis it covers.
+$('#plot').addEventListener('scroll',()=>{
+  $('#yaxis').classList.toggle('floating',$('#plot').scrollLeft>0);
+});
+addEventListener('resize',syncYAxis);
 
 // Pointer events are taken on the <svg>, so a drag that starts on top of a dot still
 // brushes instead of being swallowed by the mark.
@@ -729,7 +766,9 @@ $('#q').onkeydown=e=>{
 $('#toggle').onclick=()=>{
   const showing=$('#tablewrap').classList.toggle('hide')===false;
   $('#plot').classList.toggle('hide',showing);
+  $('#yaxis').classList.toggle('hide',showing);
   $('#toggle').textContent=showing?'Show chart':'Show table';
+  if(!showing) syncYAxis();   // the pane cannot be measured while the plot is display:none
 };
 function boot(){
   initProviders();
